@@ -19,8 +19,7 @@ import org.acme.vehiclerouting.domain.Location;
 public final class OrsDrivingTimeCalculator {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final HttpClient CLIENT = HttpClient.newBuilder()
-            .connectTimeout(java.time.Duration.ofSeconds(5)).build();
+    private static final HttpClient CLIENT = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(5)).build();
 
     private final String baseUrl;
     private final String profile;
