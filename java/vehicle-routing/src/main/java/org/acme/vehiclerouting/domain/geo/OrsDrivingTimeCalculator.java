@@ -96,8 +96,9 @@ public final class OrsDrivingTimeCalculator {
             body.put("locations", coords);
             body.put("metrics", List.of("duration", "distance"));
             body.put("resolve_locations", false);
+            body.put("maximum_speed", 85);
             if (avoidMotorways) {
-                body.put("avoid_features", List.of("motorway"));
+                body.put("avoid_features", List.of("highways"));
             }
 
             String json = MAPPER.writeValueAsString(body);
