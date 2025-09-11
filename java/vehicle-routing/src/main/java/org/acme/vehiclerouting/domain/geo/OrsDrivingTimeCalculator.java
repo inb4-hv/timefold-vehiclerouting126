@@ -24,45 +24,67 @@ import java.util.concurrent.ConcurrentHashMap;
  *     * highwayMap: no avoid
  *     * noMotorwayMap: options.avoid_features:["highways"]
  * - Location stores both maps. Callers choose which to use.
+ * - INFO logs are emitted so you can see them in Docker without changing Quarkus log level.
  */
 public final class OrsDrivingTimeCalculator {
 
     private static final Logger LOG = LoggerFactory.getLogger(OrsDrivingTimeCalculator.class);
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final HttpClient CLIENT = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(5))
-            .build();
 
-    private final String baseUrl;   // e.g. http://localhost:8082
-    private final String profile;   // e.g. driving-car
-    private final String apiKey;    // optional
-    private final boolean debug;
+    private final String baseUrl;     // e.g. http://ors-app:8082
+    private final String profile;     // e.g. driving-car
+    private final String apiKey;      // optional
+    private final boolean debug;      // if true, log every edge
+    private final int logFirst;       // log the first N edges
+    private final int logEvery;       // or log every Nth edge
+    private final int timeoutSec;
 
-    // Small cache to avoid hammering ORS when importing repeatedly.
-    // Key: "<fromLat,fromLon>-><toLat,toLon>|avoid=<true|false>"
+    private final HttpClient client;
+
+    // Cache: "<fromLat,fromLon>-><toLat,toLon>|avoid=<true|false>"
     private static final Map<String, Long> DURATION_CACHE_SEC = new ConcurrentHashMap<>();
 
     public OrsDrivingTimeCalculator(String baseUrl, String profile) {
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.profile = profile;
         this.apiKey = System.getenv().getOrDefault("APP_ORS_API_KEY", "");
-        this.debug = Boolean.parseBoolean(System.getenv().getOrDefault("APP_ORS_DEBUG", "false"));
+        this.debug = Boolean.parseBoolean(System.getenv().getOrDefault("APP_ORS_DEBUG", "true"));
+        this.logFirst = parseIntEnv("APP_ORS_LOG_FIRST", 12);
+        this.logEvery = parseIntEnv("APP_ORS_LOG_EVERY", 0); // 0 = off
+        this.timeoutSec = parseIntEnv("APP_ORS_TIMEOUT_SEC", 20);
+
+        this.client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(Math.max(5, timeoutSec / 2)))
+                .build();
+    }
+
+    private static int parseIntEnv(String k, int def) {
+        try { return Integer.parseInt(System.getenv().getOrDefault(k, String.valueOf(def))); }
+        catch (Exception e) { return def; }
     }
 
     /** Build both maps and store them on each Location. */
     public void initDrivingTimeMapsForPlan(List<Vehicle> vehicles, List<Visit> visits) {
-        // De-dupe the set of all distinct Location instances (vehicles may share a depot).
+        // Unique set of locations (vehicles may share a depot).
         Set<Location> all = new LinkedHashSet<>();
         for (Vehicle v : vehicles) all.add(v.getHomeLocation());
         for (Visit vi : visits)   all.add(vi.getLocation());
         List<Location> locs = new ArrayList<>(all);
 
-        int logBudget = debug ? 1000000 : 12; // print only first N pairs unless debug
+        final long totalPairs = (long) locs.size() * (long) locs.size();
+        LOG.info("ORS init: baseUrl='{}', profile='{}', apiKeyPresent={}, timeout={}s, locations={}, pairs={}",
+                baseUrl, profile, !apiKey.isEmpty(), timeoutSec, locs.size(), totalPairs);
+        LOG.info("ORS logging: debug={}, logFirst={}, logEvery={}", debug, logFirst, logEvery);
+
+        int edgeIndex = 0;
+        long orsOk = 0, orsFallback = 0;
 
         for (Location from : locs) {
-            Map<Location, Long> hiMap  = new HashMap<>(locs.size());
-            Map<Location, Long> noMap  = new HashMap<>(locs.size());
+            Map<Location, Long> hiMap = new HashMap<>(locs.size());
+            Map<Location, Long> noMap = new HashMap<>(locs.size());
+
+            long localOk = 0, localFallback = 0;
 
             for (Location to : locs) {
                 if (from == to) {
@@ -72,50 +94,77 @@ public final class OrsDrivingTimeCalculator {
                     continue;
                 }
 
-                long secHi = fetchDurationSec(from, to, false, logBudget--);
-                long secNo = fetchDurationSec(from, to, true,  logBudget--);
+                boolean logThis = debug
+                        || edgeIndex < logFirst
+                        || (logEvery > 0 && (edgeIndex % logEvery == 0));
 
-                // Record highway-ness just for visibility; solver will choose per-leg later.
+                long secHi;
+                try {
+                    secHi = fetchDurationSec(from, to, false, logThis);
+                    localOk++; orsOk++;
+                } catch (Throwable t) {
+                    secHi = HaversineDrivingTimeCalculator.getInstance().calculateDrivingTime(from, to);
+                    localFallback++; orsFallback++;
+                    if (logThis) {
+                        LOG.warn("ORS->Haversine (highway) {} -> {} : {}s (reason: {})",
+                                from, to, secHi, t.toString());
+                    }
+                }
+
+                long secNo;
+                try {
+                    secNo = fetchDurationSec(from, to, true, logThis);
+                    localOk++; orsOk++;
+                } catch (Throwable t) {
+                    secNo = HaversineDrivingTimeCalculator.getInstance().calculateDrivingTime(from, to);
+                    localFallback++; orsFallback++;
+                    if (logThis) {
+                        LOG.warn("ORS->Haversine (no-highway) {} -> {} : {}s (reason: {})",
+                                from, to, secNo, t.toString());
+                    }
+                }
+
+                // Marking "usedHighway" here is only for visibility in debug tools.
                 HighwayUsageRegistry.mark(from, to, true);
 
                 hiMap.put(to, secHi);
                 noMap.put(to, secNo);
+
+                edgeIndex++;
             }
 
             from.setDrivingTimeSecondsHighway(hiMap);
             from.setDrivingTimeSecondsNoMotorway(noMap);
+
+            LOG.info("ORS per-origin summary: from={} pairs={}, orsOk={}, fallback={}",
+                    from, locs.size(), localOk, localFallback);
         }
+
+        LOG.info("ORS global summary: locations={}, pairs={}, orsOkEdges={}, fallbackEdges={}",
+                locs.size(), totalPairs, orsOk, orsFallback);
     }
 
-    private long fetchDurationSec(Location from, Location to, boolean avoidHighways, int logBudget) {
+    /** Get seconds for (from,to) with avoidHighways flag; logs at INFO when 'logThis' is true. */
+    private long fetchDurationSec(Location from, Location to, boolean avoidHighways, boolean logThis) throws Exception {
         String key = cacheKey(from, to, avoidHighways);
         Long cached = DURATION_CACHE_SEC.get(key);
-        if (cached != null) return cached;
-
-        long sec;
-        try {
-            sec = callDirectionsSeconds(from, to, avoidHighways);
-        } catch (Exception e) {
-            long fallback = HaversineDrivingTimeCalculator.getInstance().calculateDrivingTime(from, to);
-            if (logBudget > 0) {
-                LOG.warn("ORS failed ({}) {} -> {} avoidHighways={} ; using Haversine={}s : {}",
-                        e.getMessage(), from, to, avoidHighways, fallback, key);
-            }
-            sec = fallback;
+        if (cached != null) {
+            if (logThis) LOG.info("ORS cache hit {} -> {} avoidHighways={} => {}s", from, to, avoidHighways, cached);
+            return cached;
         }
+
+        long sec = callDirectionsSeconds(from, to, avoidHighways, logThis);
         DURATION_CACHE_SEC.put(key, sec);
 
-        if (logBudget > 0) {
+        if (logThis) {
             LOG.info("ORS {} -> {} avoidHighways={} => {}s", from, to, avoidHighways, sec);
         }
         return sec;
     }
 
-    private long callDirectionsSeconds(Location from, Location to, boolean avoidHighways) throws Exception {
+    private long callDirectionsSeconds(Location from, Location to, boolean avoidHighways, boolean logThis) throws Exception {
         String url = baseUrl + "/ors/v2/directions/" + profile + "?format=geojson";
-        if (!apiKey.isEmpty()) {
-            url += "&api_key=" + apiKey;
-        }
+        if (!apiKey.isEmpty()) url += "&api_key=" + apiKey;
 
         ObjectNode root = MAPPER.createObjectNode();
         ArrayNode coords = root.putArray("coordinates");
@@ -132,22 +181,28 @@ public final class OrsDrivingTimeCalculator {
 
         ObjectNode options = root.putObject("options");
         if (avoidHighways) {
-            ArrayNode avoid = options.putArray("avoid_features");
-            // ORS expects "highways" for directions. (Matrix used "motorway", but directions uses "highways".)
-            avoid.add("highways");
+            options.putArray("avoid_features").add("highways");
         }
 
         String json = MAPPER.writeValueAsString(root);
 
+        if (logThis) {
+            LOG.info("ORS request: {} -> {} avoidHighways={} {}", from, to, avoidHighways,
+                    apiKey.isEmpty() ? "(no apiKey)" : "(apiKey set)");
+        }
+
         HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-                .timeout(Duration.ofSeconds(20))
+                .timeout(Duration.ofSeconds(timeoutSec))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(json))
                 .build();
 
-        HttpResponse<String> resp = CLIENT.send(req, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
+
         if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
-            throw new IllegalStateException("HTTP " + resp.statusCode() + " body: " + resp.body());
+            String body = resp.body();
+            String shortBody = body == null ? "" : body.substring(0, Math.min(240, body.length()));
+            throw new IllegalStateException("HTTP " + resp.statusCode() + " body: " + shortBody);
         }
 
         JsonNode r = MAPPER.readTree(resp.body());
