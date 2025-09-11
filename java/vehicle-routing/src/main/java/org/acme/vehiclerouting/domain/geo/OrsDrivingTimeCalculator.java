@@ -45,6 +45,14 @@ public final class OrsDrivingTimeCalculator {
     // Cache: "<fromLat,fromLon>-><toLat,toLon>|avoid=<true|false>"
     private static final Map<String, Long> DURATION_CACHE_SEC = new ConcurrentHashMap<>();
 
+
+    // Add near top of class:
+private static boolean sameCoords(Location a, Location b) {
+    return Math.abs(a.getLatitude() - b.getLatitude()) < 1e-7
+        && Math.abs(a.getLongitude() - b.getLongitude()) < 1e-7;
+}
+
+
     public OrsDrivingTimeCalculator(String baseUrl, String profile) {
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.profile = profile;
@@ -58,6 +66,9 @@ public final class OrsDrivingTimeCalculator {
                 .connectTimeout(Duration.ofSeconds(Math.max(5, timeoutSec / 2)))
                 .build();
     }
+
+
+    
 
     private static int parseIntEnv(String k, int def) {
         try { return Integer.parseInt(System.getenv().getOrDefault(k, String.valueOf(def))); }
@@ -145,80 +156,116 @@ public final class OrsDrivingTimeCalculator {
     }
 
     /** Get seconds for (from,to) with avoidHighways flag; logs at INFO when 'logThis' is true. */
-    private long fetchDurationSec(Location from, Location to, boolean avoidHighways, boolean logThis) throws Exception {
-        String key = cacheKey(from, to, avoidHighways);
-        Long cached = DURATION_CACHE_SEC.get(key);
-        if (cached != null) {
-            if (logThis) LOG.info("ORS cache hit {} -> {} avoidHighways={} => {}s", from, to, avoidHighways, cached);
-            return cached;
-        }
-
-        long sec = callDirectionsSeconds(from, to, avoidHighways, logThis);
-        DURATION_CACHE_SEC.put(key, sec);
-
+private long fetchDurationSec(Location from, Location to, boolean avoidHighways, boolean logThis) throws Exception {
+    // Short-circuit identical coordinates to avoid ORS "empty features" responses
+    if (sameCoords(from, to)) {
         if (logThis) {
-            LOG.info("ORS {} -> {} avoidHighways={} => {}s", from, to, avoidHighways, sec);
+            LOG.info("ORS short-circuit: same coords {} -> {} => 0s (avoidHighways={})", from, to, avoidHighways);
         }
-        return sec;
+        return 0L;
     }
 
-    private long callDirectionsSeconds(Location from, Location to, boolean avoidHighways, boolean logThis) throws Exception {
-        String url = baseUrl + "/ors/v2/directions/" + profile + "?format=geojson";
-        if (!apiKey.isEmpty()) url += "&api_key=" + apiKey;
-
-        ObjectNode root = MAPPER.createObjectNode();
-        ArrayNode coords = root.putArray("coordinates");
-        ArrayNode p1 = coords.addArray();
-        p1.add(from.getLongitude());
-        p1.add(from.getLatitude());
-        ArrayNode p2 = coords.addArray();
-        p2.add(to.getLongitude());
-        p2.add(to.getLatitude());
-
-        root.put("preference", "fastest");
-        root.put("maximum_speed", 85);
-        root.put("instructions", false);
-
-        ObjectNode options = root.putObject("options");
-        if (avoidHighways) {
-            options.putArray("avoid_features").add("highways");
-        }
-
-        String json = MAPPER.writeValueAsString(root);
-
-        if (logThis) {
-            LOG.info("ORS request: {} -> {} avoidHighways={} {}", from, to, avoidHighways,
-                    apiKey.isEmpty() ? "(no apiKey)" : "(apiKey set)");
-        }
-
-        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-                .timeout(Duration.ofSeconds(timeoutSec))
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(json))
-                .build();
-
-        HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
-
-        if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
-            String body = resp.body();
-            String shortBody = body == null ? "" : body.substring(0, Math.min(240, body.length()));
-            throw new IllegalStateException("HTTP " + resp.statusCode() + " body: " + shortBody);
-        }
-
-        JsonNode r = MAPPER.readTree(resp.body());
-        JsonNode features = r.get("features");
-        if (features == null || !features.isArray() || features.size() == 0) {
-            throw new IllegalStateException("Missing features[] in response");
-        }
-        JsonNode summary = features.get(0).path("properties").path("summary");
-        double durationSec = summary.path("duration").asDouble(Double.NaN);
-        if (Double.isNaN(durationSec)) {
-            throw new IllegalStateException("Missing summary.duration");
-        }
-        return Math.round(durationSec);
+    String key = cacheKey(from, to, avoidHighways);
+    Long cached = DURATION_CACHE_SEC.get(key);
+    if (cached != null) {
+        if (logThis) LOG.info("ORS cache hit {} -> {} avoidHighways={} => {}s", from, to, avoidHighways, cached);
+        return cached;
     }
+
+    long sec = callDirectionsSeconds(from, to, avoidHighways, logThis);
+    DURATION_CACHE_SEC.put(key, sec);
+    if (logThis) LOG.info("ORS {} -> {} avoidHighways={} => {}s", from, to, avoidHighways, sec);
+    return sec;
+}
+
+private long callDirectionsSeconds(Location from, Location to, boolean avoidHighways, boolean logThis) throws Exception {
+    String url = baseUrl + "/ors/v2/directions/" + profile + "?format=geojson";
+    if (!apiKey.isEmpty()) url += "&api_key=" + apiKey;
+
+    ObjectNode root = MAPPER.createObjectNode();
+    ArrayNode coords = root.putArray("coordinates");
+    ArrayNode p1 = coords.addArray();
+    p1.add(from.getLongitude());
+    p1.add(from.getLatitude());
+    ArrayNode p2 = coords.addArray();
+    p2.add(to.getLongitude());
+    p2.add(to.getLatitude());
+
+    root.put("preference", "fastest");
+    root.put("maximum_speed", 85);
+    root.put("instructions", false);
+
+    ObjectNode options = root.putObject("options");
+    if (avoidHighways) {
+        options.putArray("avoid_features").add("highways");
+    }
+
+    String json = MAPPER.writeValueAsString(root);
+
+    if (logThis) {
+        LOG.info("ORS request: {} -> {} avoidHighways={} {}", from, to, avoidHighways,
+                apiKey.isEmpty() ? "(no apiKey)" : "(apiKey set)");
+    }
+
+    HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+            .timeout(Duration.ofSeconds(timeoutSec))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofString(json))
+            .build();
+
+    HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
+    String body = resp.body() == null ? "" : resp.body();
+
+    if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
+        String shortBody = body.substring(0, Math.min(240, body.length()));
+        throw new IllegalStateException("HTTP " + resp.statusCode() + " body: " + shortBody);
+    }
+
+    JsonNode r = MAPPER.readTree(body);
+    Long sec = parseDurationSeconds(r);
+    if (sec == null) {
+        String shortBody = body.substring(0, Math.min(240, body.length()));
+        throw new IllegalStateException("Unable to parse duration from ORS response. Body: " + shortBody);
+    }
+    return sec;
+}
 
     private static String cacheKey(Location from, Location to, boolean avoid) {
         return from.toString() + "->" + to.toString() + "|avoid=" + avoid;
     }
+
+
+    // Add this helper parser to the class:
+private static Long parseDurationSeconds(JsonNode root) {
+    // A) GeoJSON: features[0].properties.summary.duration
+    JsonNode features = root.path("features");
+    if (features.isArray() && features.size() > 0) {
+        JsonNode props = features.get(0).path("properties");
+        JsonNode summary = props.path("summary");
+        if (summary.isObject()) {
+            JsonNode dur = summary.path("duration");
+            if (dur.isNumber()) return Math.round(dur.asDouble());
+        }
+        // B) GeoJSON: features[0].properties.segments[0].duration
+        JsonNode segments = props.path("segments");
+        if (segments.isArray() && segments.size() > 0) {
+            JsonNode dur = segments.get(0).path("duration");
+            if (dur.isNumber()) return Math.round(dur.asDouble());
+        }
+    }
+    // C) routes[0].summary.duration (non-geojson-like shape)
+    JsonNode routes = root.path("routes");
+    if (routes.isArray() && routes.size() > 0) {
+        JsonNode summary = routes.get(0).path("summary");
+        if (summary.isObject()) {
+            JsonNode dur = summary.path("duration");
+            if (dur.isNumber()) return Math.round(dur.asDouble());
+        }
+    }
+    return null;
+}
+Why this fixes your symptoms
+
+
+
 }
