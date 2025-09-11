@@ -7,6 +7,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.acme.vehiclerouting.domain.Location;
 import org.acme.vehiclerouting.domain.Vehicle;
 import org.acme.vehiclerouting.domain.Visit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -17,97 +19,103 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Builds TWO driving-time maps by calling /ors/v2/directions pairwise:
- *  - "highway"   : highways allowed (avoid=false)
- *  - "noMotorway": motorways avoided (avoid=true)
- *
- * The domain (Visit/Vehicle/LocationDistanceMeter) chooses which one to use per leg
- * according to the allowHighways rule you specified.
+ * Pairwise ORS /ors/v2/directions builder:
+ * - For each (from,to) builds BOTH durations:
+ *     * highwayMap: no avoid
+ *     * noMotorwayMap: options.avoid_features:["highways"]
+ * - Location stores both maps. Callers choose which to use.
  */
 public final class OrsDrivingTimeCalculator {
 
+    private static final Logger LOG = LoggerFactory.getLogger(OrsDrivingTimeCalculator.class);
+
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final HttpClient CLIENT = HttpClient
-            .newBuilder()
+    private static final HttpClient CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(5))
             .build();
 
-    private final String baseUrl;
-    private final String profile;
+    private final String baseUrl;   // e.g. http://localhost:8082
+    private final String profile;   // e.g. driving-car
+    private final String apiKey;    // optional
+    private final boolean debug;
 
-    // Cache per leg to avoid hammering ORS.
+    // Small cache to avoid hammering ORS when importing repeatedly.
     // Key: "<fromLat,fromLon>-><toLat,toLon>|avoid=<true|false>"
     private static final Map<String, Long> DURATION_CACHE_SEC = new ConcurrentHashMap<>();
 
     public OrsDrivingTimeCalculator(String baseUrl, String profile) {
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.profile = profile;
+        this.apiKey = System.getenv().getOrDefault("APP_ORS_API_KEY", "");
+        this.debug = Boolean.parseBoolean(System.getenv().getOrDefault("APP_ORS_DEBUG", "false"));
     }
 
-    /**
-     * Initialize BOTH maps on each Location:
-     *  - setDrivingTimeSecondsHighway(...)
-     *  - setDrivingTimeSecondsNoMotorway(...)
-     *
-     * We compute pairwise durations twice (avoid=false/true) so later code can pick
-     * the right one per leg.
-     */
+    /** Build both maps and store them on each Location. */
     public void initDrivingTimeMapsForPlan(List<Vehicle> vehicles, List<Visit> visits) {
-        // Collect all distinct locations (depots + visits)
-        List<Location> allLocs = new ArrayList<>(vehicles.size() + visits.size());
-        for (Vehicle v : vehicles) {
-            allLocs.add(v.getHomeLocation());
-        }
-        for (Visit vi : visits) {
-            allLocs.add(vi.getLocation());
-        }
+        // De-dupe the set of all distinct Location instances (vehicles may share a depot).
+        Set<Location> all = new LinkedHashSet<>();
+        for (Vehicle v : vehicles) all.add(v.getHomeLocation());
+        for (Visit vi : visits)   all.add(vi.getLocation());
+        List<Location> locs = new ArrayList<>(all);
 
-        // For every origin, build two maps: highway and no-motorway.
-        for (Location from : allLocs) {
-            Map<Location, Long> hiMap = new HashMap<>(allLocs.size());
-            Map<Location, Long> noMap = new HashMap<>(allLocs.size());
+        int logBudget = debug ? 1000000 : 12; // print only first N pairs unless debug
 
-            for (Location to : allLocs) {
+        for (Location from : locs) {
+            Map<Location, Long> hiMap  = new HashMap<>(locs.size());
+            Map<Location, Long> noMap  = new HashMap<>(locs.size());
+
+            for (Location to : locs) {
                 if (from == to) {
                     hiMap.put(to, 0L);
                     noMap.put(to, 0L);
+                    HighwayUsageRegistry.mark(from, to, false);
                     continue;
                 }
 
-                long tHi = fetchDurationSec(from, to, /*avoidHighways=*/false);
-                long tNo = fetchDurationSec(from, to, /*avoidHighways=*/true);
+                long secHi = fetchDurationSec(from, to, false, logBudget--);
+                long secNo = fetchDurationSec(from, to, true,  logBudget--);
 
-                hiMap.put(to, tHi);
-                noMap.put(to, tNo);
+                // Record highway-ness just for visibility; solver will choose per-leg later.
+                HighwayUsageRegistry.mark(from, to, true);
+
+                hiMap.put(to, secHi);
+                noMap.put(to, secNo);
             }
 
-            // Assign the two matrices to the location
             from.setDrivingTimeSecondsHighway(hiMap);
             from.setDrivingTimeSecondsNoMotorway(noMap);
         }
     }
 
-    /** Get duration (seconds) for a leg; uses cache and falls back to Haversine on error. */
-    private long fetchDurationSec(Location from, Location to, boolean avoidHighways) {
-        String key = key(from, to, avoidHighways);
+    private long fetchDurationSec(Location from, Location to, boolean avoidHighways, int logBudget) {
+        String key = cacheKey(from, to, avoidHighways);
         Long cached = DURATION_CACHE_SEC.get(key);
         if (cached != null) return cached;
 
+        long sec;
         try {
-            long sec = callDirectionsSeconds(from, to, avoidHighways);
-            DURATION_CACHE_SEC.put(key, sec);
-            return sec;
+            sec = callDirectionsSeconds(from, to, avoidHighways);
         } catch (Exception e) {
-            // Fallback to Haversine so we never produce a sentinel/unusable value.
             long fallback = HaversineDrivingTimeCalculator.getInstance().calculateDrivingTime(from, to);
-            DURATION_CACHE_SEC.put(key, fallback);
-            return fallback;
+            if (logBudget > 0) {
+                LOG.warn("ORS failed ({}) {} -> {} avoidHighways={} ; using Haversine={}s : {}",
+                        e.getMessage(), from, to, avoidHighways, fallback, key);
+            }
+            sec = fallback;
         }
+        DURATION_CACHE_SEC.put(key, sec);
+
+        if (logBudget > 0) {
+            LOG.info("ORS {} -> {} avoidHighways={} => {}s", from, to, avoidHighways, sec);
+        }
+        return sec;
     }
 
-    /** Call /ors/v2/directions/{profile}?format=geojson and extract the summary.duration (seconds). */
     private long callDirectionsSeconds(Location from, Location to, boolean avoidHighways) throws Exception {
         String url = baseUrl + "/ors/v2/directions/" + profile + "?format=geojson";
+        if (!apiKey.isEmpty()) {
+            url += "&api_key=" + apiKey;
+        }
 
         ObjectNode root = MAPPER.createObjectNode();
         ArrayNode coords = root.putArray("coordinates");
@@ -122,10 +130,10 @@ public final class OrsDrivingTimeCalculator {
         root.put("maximum_speed", 85);
         root.put("instructions", false);
 
-        // options.avoid_features: ["highways"] when avoidHighways == true
         ObjectNode options = root.putObject("options");
         if (avoidHighways) {
             ArrayNode avoid = options.putArray("avoid_features");
+            // ORS expects "highways" for directions. (Matrix used "motorway", but directions uses "highways".)
             avoid.add("highways");
         }
 
@@ -139,23 +147,13 @@ public final class OrsDrivingTimeCalculator {
 
         HttpResponse<String> resp = CLIENT.send(req, HttpResponse.BodyHandlers.ofString());
         if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
-            throw new IllegalStateException("ORS directions HTTP " + resp.statusCode());
+            throw new IllegalStateException("HTTP " + resp.statusCode() + " body: " + resp.body());
         }
 
         JsonNode r = MAPPER.readTree(resp.body());
         JsonNode features = r.get("features");
         if (features == null || !features.isArray() || features.size() == 0) {
-            throw new IllegalStateException("ORS directions response missing features.");
+            throw new IllegalStateException("Missing features[] in response");
         }
         JsonNode summary = features.get(0).path("properties").path("summary");
-        double durationSec = summary.path("duration").asDouble(Double.NaN);
-        if (Double.isNaN(durationSec)) {
-            throw new IllegalStateException("ORS directions response missing duration.");
-        }
-        return Math.round(durationSec);
-    }
-
-    private static String key(Location from, Location to, boolean avoid) {
-        return from.toString() + "->" + to.toString() + "|avoid=" + avoid;
-    }
-}
+        double durationSec =
