@@ -17,11 +17,12 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Builds the driving-time map by calling /ors/v2/directions (pairwise).
- * Highway usage per leg follows your rule:
- *   - visit -> X : use source visit.allowHighways
- *   - depot -> visit : use destination visit.allowHighways
- *   - visit -> depot : use source visit.allowHighways
+ * Builds TWO driving-time maps by calling /ors/v2/directions pairwise:
+ *  - "highway"   : highways allowed (avoid=false)
+ *  - "noMotorway": motorways avoided (avoid=true)
+ *
+ * The domain (Visit/Vehicle/LocationDistanceMeter) chooses which one to use per leg
+ * according to the allowHighways rule you specified.
  */
 public final class OrsDrivingTimeCalculator {
 
@@ -34,8 +35,8 @@ public final class OrsDrivingTimeCalculator {
     private final String baseUrl;
     private final String profile;
 
-    // Simple cache so repeated imports don’t hammer ORS.
-    // Key format: "<fromLat,fromLon>-><toLat,toLon>|avoid=<true|false>"
+    // Cache per leg to avoid hammering ORS.
+    // Key: "<fromLat,fromLon>-><toLat,toLon>|avoid=<true|false>"
     private static final Map<String, Long> DURATION_CACHE_SEC = new ConcurrentHashMap<>();
 
     public OrsDrivingTimeCalculator(String baseUrl, String profile) {
@@ -44,70 +45,49 @@ public final class OrsDrivingTimeCalculator {
     }
 
     /**
-     * Initialize time maps using pairwise /directions calls and the allowHighways rule.
+     * Initialize BOTH maps on each Location:
+     *  - setDrivingTimeSecondsHighway(...)
+     *  - setDrivingTimeSecondsNoMotorway(...)
+     *
+     * We compute pairwise durations twice (avoid=false/true) so later code can pick
+     * the right one per leg.
      */
     public void initDrivingTimeMapsForPlan(List<Vehicle> vehicles, List<Visit> visits) {
-        // Build location lists and helper maps
+        // Collect all distinct locations (depots + visits)
         List<Location> allLocs = new ArrayList<>(vehicles.size() + visits.size());
-        Map<Location, Visit> locToVisit = new HashMap<>();
-        Set<Location> depotLocs = new HashSet<>();
-
         for (Vehicle v : vehicles) {
-            Location dep = v.getHomeLocation();
-            allLocs.add(dep);
-            depotLocs.add(dep);
+            allLocs.add(v.getHomeLocation());
         }
         for (Visit vi : visits) {
-            Location lo = vi.getLocation();
-            allLocs.add(lo);
-            locToVisit.put(lo, vi);
+            allLocs.add(vi.getLocation());
         }
 
-        // Fill per-location driving maps
+        // For every origin, build two maps: highway and no-motorway.
         for (Location from : allLocs) {
-            Map<Location, Long> map = new HashMap<>(allLocs.size());
-            for (Location to : allLocs) {
-                long sec;
-                boolean usedHighway;
+            Map<Location, Long> hiMap = new HashMap<>(allLocs.size());
+            Map<Location, Long> noMap = new HashMap<>(allLocs.size());
 
+            for (Location to : allLocs) {
                 if (from == to) {
-                    sec = 0L;
-                    usedHighway = false;
-                } else {
-                    boolean avoidHighways = computeAvoidHighways(from, to, locToVisit, depotLocs);
-                    usedHighway = !avoidHighways;
-                    sec = fetchDurationSec(from, to, avoidHighways);
+                    hiMap.put(to, 0L);
+                    noMap.put(to, 0L);
+                    continue;
                 }
 
-                map.put(to, sec);
-                HighwayUsageRegistry.mark(from, to, usedHighway);
+                long tHi = fetchDurationSec(from, to, /*avoidHighways=*/false);
+                long tNo = fetchDurationSec(from, to, /*avoidHighways=*/true);
+
+                hiMap.put(to, tHi);
+                noMap.put(to, tNo);
             }
-            from.setDrivingTimeSeconds(map);
+
+            // Assign the two matrices to the location
+            from.setDrivingTimeSecondsHighway(hiMap);
+            from.setDrivingTimeSecondsNoMotorway(noMap);
         }
     }
 
-    /**
-     * Rule:
-     *  - If FROM is a visit: use FROM.allowHighways
-     *  - else (FROM is depot) and TO is a visit: use TO.allowHighways
-     *  - else default to no-highways
-     */
-    private static boolean computeAvoidHighways(Location from,
-                                                Location to,
-                                                Map<Location, Visit> locToVisit,
-                                                Set<Location> depotLocs) {
-        Visit fromVisit = locToVisit.get(from);
-        if (fromVisit != null) {
-            return !fromVisit.isAllowHighways();
-        }
-        Visit toVisit = locToVisit.get(to);
-        if (toVisit != null) {
-            return !toVisit.isAllowHighways();
-        }
-        // depot -> depot (irrelevant in practice); avoid highways by default
-        return true;
-    }
-
+    /** Get duration (seconds) for a leg; uses cache and falls back to Haversine on error. */
     private long fetchDurationSec(Location from, Location to, boolean avoidHighways) {
         String key = key(from, to, avoidHighways);
         Long cached = DURATION_CACHE_SEC.get(key);
@@ -118,13 +98,14 @@ public final class OrsDrivingTimeCalculator {
             DURATION_CACHE_SEC.put(key, sec);
             return sec;
         } catch (Exception e) {
-            // Fallback to Haversine time so we never produce the 10h sentinel.
+            // Fallback to Haversine so we never produce a sentinel/unusable value.
             long fallback = HaversineDrivingTimeCalculator.getInstance().calculateDrivingTime(from, to);
             DURATION_CACHE_SEC.put(key, fallback);
             return fallback;
         }
     }
 
+    /** Call /ors/v2/directions/{profile}?format=geojson and extract the summary.duration (seconds). */
     private long callDirectionsSeconds(Location from, Location to, boolean avoidHighways) throws Exception {
         String url = baseUrl + "/ors/v2/directions/" + profile + "?format=geojson";
 
@@ -141,6 +122,7 @@ public final class OrsDrivingTimeCalculator {
         root.put("maximum_speed", 85);
         root.put("instructions", false);
 
+        // options.avoid_features: ["highways"] when avoidHighways == true
         ObjectNode options = root.putObject("options");
         if (avoidHighways) {
             ArrayNode avoid = options.putArray("avoid_features");
@@ -170,9 +152,6 @@ public final class OrsDrivingTimeCalculator {
         if (Double.isNaN(durationSec)) {
             throw new IllegalStateException("ORS directions response missing duration.");
         }
-        // You could also read distance if needed:
-        // double distance = summary.path("distance").asDouble();
-
         return Math.round(durationSec);
     }
 
