@@ -6,6 +6,13 @@ public class LocationDistanceMeter implements NearbyDistanceMeter<Visit, Locatio
 
     @Override
     public double getNearbyDistance(Visit origin, LocationAware destination) {
-        return origin.getLocation().getDrivingTimeTo(destination.getLocation());
+        Location o = origin.getLocation();
+        Location d = destination.getLocation();
+
+        boolean useHighway = origin.isAllowHighways();
+        if (destination instanceof Visit dv) {
+            useHighway = useHighway || dv.isAllowHighways();
+        }
+        return useHighway ? o.getHighwayTimeTo(d) : o.getNoMotorwayTimeTo(d);
     }
 }

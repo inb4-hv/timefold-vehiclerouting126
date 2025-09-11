@@ -13,8 +13,11 @@ public class Location {
     private double latitude;
     private double longitude;
 
+    // Two maps: with highways and without motorways
     @JsonIgnore
-    private Map<Location, Long> drivingTimeSeconds;
+    private Map<Location, Long> drivingTimeSecondsHighway;
+    @JsonIgnore
+    private Map<Location, Long> drivingTimeSecondsNoMotorway;
 
     @JsonCreator
     public Location(@JsonProperty("latitude") double latitude, @JsonProperty("longitude") double longitude) {
@@ -30,32 +33,41 @@ public class Location {
         return longitude;
     }
 
-    public Map<Location, Long> getDrivingTimeSeconds() {
-        return drivingTimeSeconds;
+    public Map<Location, Long> getDrivingTimeSecondsHighway() {
+        return drivingTimeSecondsHighway;
     }
 
-    /**
-     * Set the driving time map (in seconds).
-     *
-     * @param drivingTimeSeconds a map containing driving time from here to other locations
-     */
-    public void setDrivingTimeSeconds(Map<Location, Long> drivingTimeSeconds) {
-        this.drivingTimeSeconds = drivingTimeSeconds;
+    public void setDrivingTimeSecondsHighway(Map<Location, Long> drivingTimeSecondsHighway) {
+        this.drivingTimeSecondsHighway = drivingTimeSecondsHighway;
     }
 
-    /**
-     * Driving time to the given location in seconds.
-     *
-     * @param location other location
-     * @return driving time in seconds
-     */
-    public long getDrivingTimeTo(Location location) {
-        return drivingTimeSeconds.get(location);
+    public Map<Location, Long> getDrivingTimeSecondsNoMotorway() {
+        return drivingTimeSecondsNoMotorway;
+    }
+
+    public void setDrivingTimeSecondsNoMotorway(Map<Location, Long> drivingTimeSecondsNoMotorway) {
+        this.drivingTimeSecondsNoMotorway = drivingTimeSecondsNoMotorway;
+    }
+
+    /** Highway travel time (seconds) to the given location. */
+    public long getHighwayTimeTo(Location to) {
+        return drivingTimeSecondsHighway.get(to);
+    }
+
+    /** Non-motorway travel time (seconds) to the given location. */
+    public long getNoMotorwayTimeTo(Location to) {
+        return drivingTimeSecondsNoMotorway.get(to);
+    }
+
+    /** Back-compat: use the faster of the two (mainly for any forgotten callers). */
+    public long getDrivingTimeTo(Location to) {
+        long hi = getHighwayTimeTo(to);
+        long no = getNoMotorwayTimeTo(to);
+        return Math.min(hi, no);
     }
 
     @Override
     public String toString() {
         return latitude + "," + longitude;
     }
-
 }

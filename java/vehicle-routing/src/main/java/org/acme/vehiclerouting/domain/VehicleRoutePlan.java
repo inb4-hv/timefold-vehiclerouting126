@@ -94,14 +94,13 @@ this.visits = visits;
  String profile = System.getProperty("app.ors.profile",
          System.getenv().getOrDefault("APP_ORS_PROFILE", "driving-car"));
 
- try {
-     HighwayUsageRegistry.clear();
-     new OrsDrivingTimeCalculator(baseUrl, profile).initDrivingTimeMaps(locations);
- } catch (Exception ex) {
-     // Fallback that always works, so the app still runs even if ORS is down.
-     org.acme.vehiclerouting.domain.geo.HaversineDrivingTimeCalculator
-             .getInstance().initDrivingTimeMaps(locations);
- }
+try {
+    new org.acme.vehiclerouting.domain.geo.OrsDrivingTimeCalculator(baseUrl, profile)
+            .initDrivingTimeMaps(locations);
+} catch (Exception ex) {
+    org.acme.vehiclerouting.domain.geo.HaversineDrivingTimeCalculator
+            .getInstance().initDrivingTimeMaps(locations);
+}
 }
 
     public String getName() {

@@ -4,7 +4,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-//import java.time.Duration as JDuration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -19,7 +18,9 @@ import org.acme.vehiclerouting.domain.Location;
 public final class OrsDrivingTimeCalculator {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final HttpClient CLIENT = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(5)).build();
+    private static final HttpClient CLIENT = HttpClient.newBuilder()
+            .connectTimeout(java.time.Duration.ofSeconds(5))
+            .build();
 
     private final String baseUrl;
     private final String profile;
@@ -29,13 +30,17 @@ public final class OrsDrivingTimeCalculator {
         this.profile = profile;
     }
 
+    /** Build BOTH matrices and assign to each Location. */
     public void initDrivingTimeMaps(Collection<Location> locations) {
         if (locations.size() <= 1) {
-            locations.forEach(l -> l.setDrivingTimeSeconds(Map.of(l, 0L)));
+            locations.forEach(l -> {
+                l.setDrivingTimeSecondsHighway(Map.of(l, 0L));
+                l.setDrivingTimeSecondsNoMotorway(Map.of(l, 0L));
+            });
             return;
         }
 
-        // Build ORS location list [lon, lat]
+        // ORS expects [lon, lat]
         List<double[]> coords = new ArrayList<>(locations.size());
         List<Location> indexToLoc = new ArrayList<>(locations.size());
         for (Location l : locations) {
@@ -43,45 +48,38 @@ public final class OrsDrivingTimeCalculator {
             indexToLoc.add(l);
         }
 
-        // Two matrices: highway allowed, and avoid motorways
-        MatrixResult highway = fetchMatrix(coords, false);
-        MatrixResult noMotorway = fetchMatrix(coords, true);
+        MatrixResult hi = fetchMatrix(coords, false);
+        MatrixResult no = fetchMatrix(coords, true);
 
-        // Fill per-location maps
         for (int i = 0; i < indexToLoc.size(); i++) {
             Location from = indexToLoc.get(i);
-            Map<Location, Long> map = new HashMap<>();
+            Map<Location, Long> mapHi = new HashMap<>();
+            Map<Location, Long> mapNo = new HashMap<>();
+
             for (int j = 0; j < indexToLoc.size(); j++) {
                 Location to = indexToLoc.get(j);
-                long timeSec;
-                boolean usedHighway;
+                long hiSec, noSec;
 
                 if (i == j) {
-                    timeSec = 0L;
-                    usedHighway = false;
+                    hiSec = 0L;
+                    noSec = 0L;
                 } else {
-                    // Prefer no-motorway time if it exists
-                    Double tNo = noMotorway.duration(i, j);
-                    Double dNo = noMotorway.distance(i, j);
-                    Double tHi = highway.duration(i, j);
-                    Double dHi = highway.distance(i, j);
+                    Double tHi = hi.duration(i, j);
+                    Double dHi = hi.distance(i, j);
+                    Double tNo = no.duration(i, j);
+                    Double dNo = no.distance(i, j);
 
-                    if (tNo != null) {
-                        timeSec = adjustedWith85Cap(tNo, dNo);
-                        usedHighway = false;
-                    } else if (tHi != null) {
-                        timeSec = adjustedWith85Cap(tHi, dHi);
-                        usedHighway = true;
-                    } else {
-                        // Fallback defensive zero-reachability → large penalty
-                        timeSec = 36000; // 10h fallback
-                        usedHighway = false;
-                    }
+                    // Cap at 85 km/h and fall back across matrices if one missing.
+                    hiSec = (tHi != null) ? adjustedWith85Cap(tHi, dHi)
+                                          : (tNo != null ? adjustedWith85Cap(tNo, dNo) : 36000L);
+                    noSec = (tNo != null) ? adjustedWith85Cap(tNo, dNo)
+                                          : (tHi != null ? adjustedWith85Cap(tHi, dHi) : 36000L);
                 }
-                map.put(to, timeSec);
-                HighwayUsageRegistry.mark(from, to, usedHighway);
+                mapHi.put(to, hiSec);
+                mapNo.put(to, noSec);
             }
-            indexToLoc.get(i).setDrivingTimeSeconds(map);
+            from.setDrivingTimeSecondsHighway(mapHi);
+            from.setDrivingTimeSecondsNoMotorway(mapNo);
         }
     }
 
@@ -112,11 +110,8 @@ public final class OrsDrivingTimeCalculator {
             HttpResponse<String> resp = CLIENT.send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
                 JsonNode root = MAPPER.readTree(resp.body());
-                JsonNode durations = root.get("durations");
-                JsonNode distances = root.get("distances");
-                return new MatrixResult(durations, distances);
+                return new MatrixResult(root.get("durations"), root.get("distances"));
             } else {
-                // Return empty MatrixResult → caller will fallback
                 return MatrixResult.empty();
             }
         } catch (Exception e) {

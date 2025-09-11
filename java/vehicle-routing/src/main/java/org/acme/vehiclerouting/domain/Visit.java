@@ -224,10 +224,10 @@ public class Visit implements LocationAware {
             throw new IllegalStateException(
                     "This method must not be called when the shadow variables are not initialized yet.");
         }
-        if (previousVisit == null) {
-            return vehicle.getHomeLocation().getDrivingTimeTo(location);
-        }
-        return previousVisit.getLocation().getDrivingTimeTo(location);
+        Location from = (previousVisit == null) ? vehicle.getHomeLocation() : previousVisit.getLocation();
+        // Use highway if either endpoint allows it.
+        boolean useHighway = (previousVisit != null && previousVisit.isAllowHighways()) || this.isAllowHighways();
+        return useHighway ? from.getHighwayTimeTo(location) : from.getNoMotorwayTimeTo(location);
     }
 
     // Required by the web UI even before the solution has been initialized.

@@ -115,17 +115,30 @@ public class Vehicle implements LocationAware {
         if (visits.isEmpty()) {
             return 0;
         }
+        long total = 0L;
 
-        long totalDrivingTime = 0;
-        Location previousLocation = homeLocation;
+        // Depot -> first
+        Visit first = visits.get(0);
+        boolean useHi = first.isAllowHighways(); // depot assumed "no", so only first matters
+        total += useHi ? homeLocation.getHighwayTimeTo(first.getLocation())
+                       : homeLocation.getNoMotorwayTimeTo(first.getLocation());
 
-        for (Visit visit : visits) {
-            totalDrivingTime += previousLocation.getDrivingTimeTo(visit.getLocation());
-            previousLocation = visit.getLocation();
+        // Between visits
+        for (int i = 0; i < visits.size() - 1; i++) {
+            Visit a = visits.get(i);
+            Visit b = visits.get(i + 1);
+            boolean hi = a.isAllowHighways() || b.isAllowHighways();
+            total += hi ? a.getLocation().getHighwayTimeTo(b.getLocation())
+                        : a.getLocation().getNoMotorwayTimeTo(b.getLocation());
         }
-        totalDrivingTime += previousLocation.getDrivingTimeTo(homeLocation);
 
-        return totalDrivingTime;
+        // Last -> depot
+        Visit last = visits.get(visits.size() - 1);
+        boolean hiBack = last.isAllowHighways();
+        total += hiBack ? last.getLocation().getHighwayTimeTo(homeLocation)
+                        : last.getLocation().getNoMotorwayTimeTo(homeLocation);
+
+        return total;
     }
 
     @JsonProperty(access = JsonProperty.Access.READ_ONLY)
