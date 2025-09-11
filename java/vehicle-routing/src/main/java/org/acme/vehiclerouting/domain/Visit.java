@@ -40,6 +40,26 @@ public class Visit implements LocationAware {
     @ShadowVariable(supplierName = "arrivalTimeSupplier")
     private LocalDateTime arrivalTime;
 
+    private String fixedVehicle;            // vehicle id or null
+    private int chefLevelRequired;
+    private boolean allowHighways;
+
+    public void setMinStartTime(LocalDateTime minStartTime){ this.minStartTime = minStartTime; }
+    public void setMaxEndTime(LocalDateTime maxEndTime){ this.maxEndTime = maxEndTime; }
+    public void setServiceDuration(Duration serviceDuration){ this.serviceDuration = serviceDuration; }
+
+    public String getFixedVehicle(){ return fixedVehicle; }
+    public void setFixedVehicle(String fixedVehicle){ this.fixedVehicle = fixedVehicle; }
+    public int getChefLevelRequired(){ return chefLevelRequired; }
+    public void setChefLevelRequired(int v){ this.chefLevelRequired = v; }
+    public boolean isAllowHighways(){ return allowHighways; }
+    public void setAllowHighways(boolean v){ this.allowHighways = v; }
+
+    public java.time.LocalDateTime getMinStartTime();
+public java.time.LocalDateTime getMaxEndTime();
+public java.time.Duration getServiceDuration();
+public Visit getPreviousVisit();
+
     public Visit() {
     }
 

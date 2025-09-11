@@ -1,12 +1,25 @@
 package org.acme.vehiclerouting.rest;
 
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.stream.Stream;
 
+import ai.timefold.solver.core.api.score.analysis.ScoreAnalysis;
+import ai.timefold.solver.core.api.score.buildin.hardsoftlong.HardSoftLongScore;
 import ai.timefold.solver.core.api.solver.RecommendedAssignment;
+import ai.timefold.solver.core.api.solver.ScoreAnalysisFetchPolicy;
+import ai.timefold.solver.core.api.solver.SolutionManager;
+import ai.timefold.solver.core.api.solver.SolverManager;
+import ai.timefold.solver.core.api.solver.SolverStatus;
+
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.DELETE;
@@ -20,13 +33,7 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
-import ai.timefold.solver.core.api.score.analysis.ScoreAnalysis;
-import ai.timefold.solver.core.api.score.buildin.hardsoftlong.HardSoftLongScore;
-import ai.timefold.solver.core.api.solver.ScoreAnalysisFetchPolicy;
-import ai.timefold.solver.core.api.solver.SolutionManager;
-import ai.timefold.solver.core.api.solver.SolverManager;
-import ai.timefold.solver.core.api.solver.SolverStatus;
-
+import org.acme.vehiclerouting.domain.Location;
 import org.acme.vehiclerouting.domain.Vehicle;
 import org.acme.vehiclerouting.domain.VehicleRoutePlan;
 import org.acme.vehiclerouting.domain.Visit;
@@ -256,6 +263,114 @@ public class VehicleRoutePlanResource {
         return fetchPolicy == null ? solutionManager.analyze(problem) : solutionManager.analyze(problem, fetchPolicy);
     }
 
+    // ---------------------------
+    // Import endpoint for your JSON
+    // ---------------------------
+    @POST
+    @Path("import")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    @SuppressWarnings("unchecked")
+    public VehicleRoutePlan importProblem(Map<String, Object> payload) {
+        // 1) depots -> id -> Location
+        var depots = (List<Map<String, Object>>) payload.get("depots");
+        Map<String, Location> depotLoc = new HashMap<>();
+        for (var d : depots) {
+            String id = d.get("id").toString();
+            List<?> arr = (List<?>) d.get("location");
+            double lat = ((Number) arr.get(0)).doubleValue();
+            double lon = ((Number) arr.get(1)).doubleValue();
+            depotLoc.put(id, new Location(lat, lon));
+        }
+
+        // 2) vehicles
+        var vehiclesIn = (List<Map<String, Object>>) payload.get("vehicles");
+        List<Vehicle> vehicles = new ArrayList<>();
+        for (var v : vehiclesIn) {
+            String id = v.get("id").toString();
+            int capacity = ((Number) v.getOrDefault("capacity", 999999)).intValue();
+            String depotId = v.get("homeLocation").toString();
+            Location home = depotLoc.get(depotId);
+            Vehicle veh = new Vehicle(id, capacity, home, null);
+            // earliestDeparture -> departureTime
+            Object ed = v.get("earliestDeparture");
+            if (ed != null) {
+                veh.setDepartureTime(LocalDateTime.parse(ed.toString()));
+            }
+            // optional chef level (string or number)
+            Object cl = v.get("cheffLevel");
+            if (cl != null) {
+                try {
+                    veh.setChefLevel(Integer.parseInt(cl.toString()));
+                } catch (NumberFormatException ignore) {
+                    // leave default 0 if malformed
+                }
+            }
+            vehicles.add(veh);
+        }
+
+        // 3) visits
+        var visitsIn = (List<Map<String, Object>>) payload.get("visits");
+        List<Visit> visits = new ArrayList<>();
+        for (var vs : visitsIn) {
+            String id = vs.get("id").toString();
+            String name = vs.get("name").toString();
+            List<?> arr = (List<?>) vs.get("location");
+            Location loc = new Location(((Number) arr.get(0)).doubleValue(), ((Number) arr.get(1)).doubleValue());
+
+            Visit visit = new Visit();
+            // id and name
+            try {
+                var idField = Visit.class.getDeclaredField("id");
+                idField.setAccessible(true);
+                idField.set(visit, id);
+            } catch (Exception ignore) {}
+            visit.setName(name);
+            visit.setLocation(loc);
+
+            // time window and service
+            visit.setMinStartTime(LocalDateTime.parse(vs.get("minStartTime").toString()));
+            visit.setMaxEndTime(LocalDateTime.parse(vs.get("maxEndTime").toString()));
+            long serviceSec = ((Number) vs.get("serviceDuration")).longValue();
+            visit.setServiceDuration(Duration.ofSeconds(serviceSec));
+            visit.setArrivalTime(null);
+            visit.setDemand(0);
+
+            // extras for later constraints
+            Object fv = vs.get("fixedVehicle");
+            if (fv != null) visit.setFixedVehicle(fv.toString());
+            Object clr = vs.get("cheffLevelRequired");
+            if (clr == null) clr = vs.get("chefLevelRequired");
+            if (clr != null) {
+                try {
+                    visit.setChefLevelRequired(Integer.parseInt(clr.toString()));
+                } catch (NumberFormatException ignore) {
+                    // leave default 0
+                }
+            }
+            Object ah = vs.get("allowHighways");
+            if (ah != null) visit.setAllowHighways(Boolean.parseBoolean(ah.toString()));
+
+            visits.add(visit);
+        }
+
+        // 4) plan bounds and name
+        String name = payload.getOrDefault("name", "problem").toString();
+        LocalDateTime start = LocalDateTime.parse(payload.get("startDateTime").toString());
+        LocalDateTime end = LocalDateTime.parse(payload.get("endDateTime").toString());
+
+        // 5) init driving times (Haversine for step 1)
+        List<Location> allLocs = Stream.concat(
+                vehicles.stream().map(Vehicle::getHomeLocation),
+                visits.stream().map(Visit::getLocation)
+        ).toList();
+        org.acme.vehiclerouting.domain.geo.HaversineDrivingTimeCalculator
+                .getInstance().initDrivingTimeMaps(allLocs);
+
+        // 6) build plan
+        return new VehicleRoutePlan(name, null, null, start, end, vehicles, visits);
+    }
+
     private record Job(VehicleRoutePlan routePlan, Throwable exception) {
 
         static Job ofRoutePlan(VehicleRoutePlan routePlan) {
@@ -265,6 +380,5 @@ public class VehicleRoutePlanResource {
         static Job ofException(Throwable exception) {
             return new Job(null, exception);
         }
-
     }
 }

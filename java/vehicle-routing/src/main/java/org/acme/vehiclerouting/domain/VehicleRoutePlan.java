@@ -12,143 +12,152 @@ import ai.timefold.solver.core.api.domain.valuerange.ValueRangeProvider;
 import ai.timefold.solver.core.api.score.buildin.hardsoftlong.HardSoftLongScore;
 import ai.timefold.solver.core.api.solver.SolverStatus;
 
-import org.acme.vehiclerouting.domain.geo.DrivingTimeCalculator;
-import org.acme.vehiclerouting.domain.geo.HaversineDrivingTimeCalculator;
+import org.acme.vehiclerouting.domain.geo.OrsDrivingTimeCalculator;
+import org.acme.vehiclerouting.domain.geo.HighwayUsageRegistry;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
- * The plan for routing vehicles to visits, including:
- * <ul>
- * <li>capacity - each vehicle has a capacity for visits demand,</li>
- * <li>time windows - each visit accepts the vehicle only in specified time window.</li>
- * </ul>
- *
- * The planning solution is optimized according to the driving time (as opposed to the travel distance, for example)
- * because it is easy to determine if the vehicle arrival time fits into the visit time window.
- * In addition, optimizing travel time optimizes the distance too, as a side effect - in case there is a faster route,
- * the travel time takes precedence (highway vs. local road).
- */
+
+The plan for routing vehicles to visits, including:
+
+capacity
+
+time windows
+
+Travel time is used to evaluate feasibility and optimize routes.
+*/
 @JsonInclude(JsonInclude.Include.NON_NULL)
 @PlanningSolution
 public class VehicleRoutePlan {
 
-    private String name;
+private String name;
 
-    private Location southWestCorner;
-    private Location northEastCorner;
+private Location southWestCorner;
+private Location northEastCorner;
 
-    private LocalDateTime startDateTime;
+private LocalDateTime startDateTime;
 
-    private LocalDateTime endDateTime;
+private LocalDateTime endDateTime;
 
-    @PlanningEntityCollectionProperty
-    private List<Vehicle> vehicles;
+@PlanningEntityCollectionProperty
+private List<Vehicle> vehicles;
 
-    @PlanningEntityCollectionProperty
-    @ValueRangeProvider
-    private List<Visit> visits;
+@PlanningEntityCollectionProperty
+@ValueRangeProvider
+private List<Visit> visits;
 
-    @PlanningScore
-    private HardSoftLongScore score;
+@PlanningScore
+private HardSoftLongScore score;
 
-    private SolverStatus solverStatus;
+private SolverStatus solverStatus;
 
-    @JsonProperty(access = JsonProperty.Access.READ_ONLY)
-    private String scoreExplanation;
+@JsonProperty(access = JsonProperty.Access.READ_ONLY)
+private String scoreExplanation;
 
-    public VehicleRoutePlan() {
-    }
+public VehicleRoutePlan() {
+}
 
-    public VehicleRoutePlan(String name, HardSoftLongScore score, SolverStatus solverStatus) {
-        this.name = name;
-        this.score = score;
-        this.solverStatus = solverStatus;
-    }
+public VehicleRoutePlan(String name, HardSoftLongScore score, SolverStatus solverStatus) {
+this.name = name;
+this.score = score;
+this.solverStatus = solverStatus;
+}
 
-    @JsonCreator
-    public VehicleRoutePlan(@JsonProperty("name") String name,
-            @JsonProperty("southWestCorner") Location southWestCorner,
-            @JsonProperty("northEastCorner") Location northEastCorner,
-            @JsonProperty("startDateTime") LocalDateTime startDateTime,
-            @JsonProperty("endDateTime") LocalDateTime endDateTime,
-            @JsonProperty("vehicles") List<Vehicle> vehicles,
-            @JsonProperty("visits") List<Visit> visits) {
-        this.name = name;
-        this.southWestCorner = southWestCorner;
-        this.northEastCorner = northEastCorner;
-        this.startDateTime = startDateTime;
-        this.endDateTime = endDateTime;
-        this.vehicles = vehicles;
-        this.visits = visits;
-        List<Location> locations = Stream.concat(
-                vehicles.stream().map(Vehicle::getHomeLocation),
-                visits.stream().map(Visit::getLocation)).toList();
+@JsonCreator
+public VehicleRoutePlan(@JsonProperty("name") String name,
+@JsonProperty("southWestCorner") Location southWestCorner,
+@JsonProperty("northEastCorner") Location northEastCorner,
+@JsonProperty("startDateTime") LocalDateTime startDateTime,
+@JsonProperty("endDateTime") LocalDateTime endDateTime,
+@JsonProperty("vehicles") List<Vehicle> vehicles,
 
-        DrivingTimeCalculator drivingTimeCalculator = HaversineDrivingTimeCalculator.getInstance();
-        drivingTimeCalculator.initDrivingTimeMaps(locations);
-    }
+
+@JsonProperty("visits") List<Visit> visits) {
+this.name = name;
+this.southWestCorner = southWestCorner;
+this.northEastCorner = northEastCorner;
+this.startDateTime = startDateTime;
+this.endDateTime = endDateTime;
+this.vehicles = vehicles;
+this.visits = visits;
+
+ List<Location> locations = Stream.concat(
+         vehicles.stream().map(Vehicle::getHomeLocation),
+         visits.stream().map(Visit::getLocation)).toList();
+
+ // Initialize driving times with ORS matrices, fallback to Haversine if ORS is not reachable.
+ String baseUrl = System.getProperty("app.ors.base-url",
+         System.getenv().getOrDefault("APP_ORS_BASE_URL", "http://ors-app:8082"));
+ String profile = System.getProperty("app.ors.profile",
+         System.getenv().getOrDefault("APP_ORS_PROFILE", "driving-car"));
+
+ try {
+     HighwayUsageRegistry.clear();
+     new OrsDrivingTimeCalculator(baseUrl, profile).initDrivingTimeMaps(locations);
+ } catch (Exception ex) {
+     // Fallback that always works, so the app still runs even if ORS is down.
+     org.acme.vehiclerouting.domain.geo.HaversineDrivingTimeCalculator
+             .getInstance().initDrivingTimeMaps(locations);
+ }
+}
 
     public String getName() {
-        return name;
+    return name;
     }
 
     public Location getSouthWestCorner() {
-        return southWestCorner;
+    return southWestCorner;
     }
 
     public Location getNorthEastCorner() {
-        return northEastCorner;
+    return northEastCorner;
     }
 
     public LocalDateTime getStartDateTime() {
-        return startDateTime;
+    return startDateTime;
     }
 
     public LocalDateTime getEndDateTime() {
-        return endDateTime;
+    return endDateTime;
     }
 
     public List<Vehicle> getVehicles() {
-        return vehicles;
+    return vehicles;
     }
 
     public List<Visit> getVisits() {
-        return visits;
+    return visits;
     }
 
     public HardSoftLongScore getScore() {
-        return score;
+    return score;
     }
 
     public void setScore(HardSoftLongScore score) {
-        this.score = score;
+    this.score = score;
     }
-
-    // ************************************************************************
-    // Complex methods
-    // ************************************************************************
 
     @JsonProperty(access = JsonProperty.Access.READ_ONLY)
     public long getTotalDrivingTimeSeconds() {
-        return vehicles == null ? 0 : vehicles.stream().mapToLong(Vehicle::getTotalDrivingTimeSeconds).sum();
+    return vehicles == null ? 0 : vehicles.stream().mapToLong(Vehicle::getTotalDrivingTimeSeconds).sum();
     }
 
     public SolverStatus getSolverStatus() {
-        return solverStatus;
+    return solverStatus;
     }
 
     public void setSolverStatus(SolverStatus solverStatus) {
-        this.solverStatus = solverStatus;
+    this.solverStatus = solverStatus;
     }
 
     public String getScoreExplanation() {
-        return scoreExplanation;
+    return scoreExplanation;
     }
 
     public void setScoreExplanation(String scoreExplanation) {
-        this.scoreExplanation = scoreExplanation;
+    this.scoreExplanation = scoreExplanation;
     }
 }

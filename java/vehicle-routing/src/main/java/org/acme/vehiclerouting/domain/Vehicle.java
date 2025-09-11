@@ -30,8 +30,15 @@ public class Vehicle implements LocationAware {
     @PlanningListVariable
     private List<Visit> visits;
 
+    private int chefLevel;
+    public int getChefLevel() { return chefLevel; }
+    public void setChefLevel(int chefLevel) { this.chefLevel = chefLevel; }
+
     public Vehicle() {
     }
+
+    public int getChefLevel();
+    public org.acme.vehiclerouting.domain.Location getHomeLocation();
 
     public Vehicle(String id, int capacity, Location homeLocation, LocalDateTime departureTime) {
         this.id = id;
@@ -86,6 +93,13 @@ public class Vehicle implements LocationAware {
     public Location getLocation() {
         return homeLocation;
     }
+
+    // Allow JSON "earliestDeparture" to set departureTime
+    @JsonProperty("earliestDeparture")
+    public void setDepartureTime(LocalDateTime departureTime) {
+        this.departureTime = departureTime;
+    }
+
 
     @JsonProperty(access = JsonProperty.Access.READ_ONLY)
     public int getTotalDemand() {
