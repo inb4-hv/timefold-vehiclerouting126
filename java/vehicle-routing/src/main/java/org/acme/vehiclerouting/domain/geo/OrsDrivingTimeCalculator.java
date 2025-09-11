@@ -156,4 +156,14 @@ public final class OrsDrivingTimeCalculator {
             throw new IllegalStateException("Missing features[] in response");
         }
         JsonNode summary = features.get(0).path("properties").path("summary");
-        double durationSec =
+        double durationSec = summary.path("duration").asDouble(Double.NaN);
+        if (Double.isNaN(durationSec)) {
+            throw new IllegalStateException("Missing summary.duration");
+        }
+        return Math.round(durationSec);
+    }
+
+    private static String cacheKey(Location from, Location to, boolean avoid) {
+        return from.toString() + "->" + to.toString() + "|avoid=" + avoid;
+    }
+}
