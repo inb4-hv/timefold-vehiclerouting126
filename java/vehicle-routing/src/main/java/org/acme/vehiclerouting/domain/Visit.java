@@ -10,7 +10,6 @@ import ai.timefold.solver.core.api.domain.variable.InverseRelationShadowVariable
 import ai.timefold.solver.core.api.domain.variable.PreviousElementShadowVariable;
 import ai.timefold.solver.core.api.domain.variable.ShadowSources;
 import ai.timefold.solver.core.api.domain.variable.ShadowVariable;
-import ai.timefold.solver.core.api.domain.variable.ShadowVariablesInconsistent;
 
 import com.fasterxml.jackson.annotation.JsonIdentityInfo;
 import com.fasterxml.jackson.annotation.JsonIdentityReference;
@@ -31,6 +30,11 @@ public class Visit implements LocationAware {
     private LocalDateTime maxEndTime;
     private Duration serviceDuration;
 
+    // custom fields
+    private String fixedVehicle;        // vehicle id or null
+    private int chefLevelRequired;
+    private boolean allowHighways;
+
     @JsonIdentityReference(alwaysAsId = true)
     @InverseRelationShadowVariable(sourceVariableName = "visits")
     private Vehicle vehicle;
@@ -39,26 +43,6 @@ public class Visit implements LocationAware {
     private Visit previousVisit;
     @ShadowVariable(supplierName = "arrivalTimeSupplier")
     private LocalDateTime arrivalTime;
-
-    private String fixedVehicle;            // vehicle id or null
-    private int chefLevelRequired;
-    private boolean allowHighways;
-
-    public void setMinStartTime(LocalDateTime minStartTime){ this.minStartTime = minStartTime; }
-    public void setMaxEndTime(LocalDateTime maxEndTime){ this.maxEndTime = maxEndTime; }
-    public void setServiceDuration(Duration serviceDuration){ this.serviceDuration = serviceDuration; }
-
-    public String getFixedVehicle(){ return fixedVehicle; }
-    public void setFixedVehicle(String fixedVehicle){ this.fixedVehicle = fixedVehicle; }
-    public int getChefLevelRequired(){ return chefLevelRequired; }
-    public void setChefLevelRequired(int v){ this.chefLevelRequired = v; }
-    public boolean isAllowHighways(){ return allowHighways; }
-    public void setAllowHighways(boolean v){ this.allowHighways = v; }
-
-    public java.time.LocalDateTime getMinStartTime();
-public java.time.LocalDateTime getMaxEndTime();
-public java.time.Duration getServiceDuration();
-public Visit getPreviousVisit();
 
     public Visit() {
     }
@@ -76,6 +60,11 @@ public Visit getPreviousVisit();
 
     public String getId() {
         return id;
+    }
+
+    // handy for import
+    public void setId(String id) {
+        this.id = id;
     }
 
     public String getName() {
@@ -107,12 +96,49 @@ public Visit getPreviousVisit();
         return minStartTime;
     }
 
+    public void setMinStartTime(LocalDateTime minStartTime) {
+        this.minStartTime = minStartTime;
+    }
+
     public LocalDateTime getMaxEndTime() {
         return maxEndTime;
     }
 
+    public void setMaxEndTime(LocalDateTime maxEndTime) {
+        this.maxEndTime = maxEndTime;
+    }
+
     public Duration getServiceDuration() {
         return serviceDuration;
+    }
+
+    public void setServiceDuration(Duration serviceDuration) {
+        this.serviceDuration = serviceDuration;
+    }
+
+    // custom fields getters and setters
+    public String getFixedVehicle() {
+        return fixedVehicle;
+    }
+
+    public void setFixedVehicle(String fixedVehicle) {
+        this.fixedVehicle = fixedVehicle;
+    }
+
+    public int getChefLevelRequired() {
+        return chefLevelRequired;
+    }
+
+    public void setChefLevelRequired(int chefLevelRequired) {
+        this.chefLevelRequired = chefLevelRequired;
+    }
+
+    public boolean isAllowHighways() {
+        return allowHighways;
+    }
+
+    public void setAllowHighways(boolean allowHighways) {
+        this.allowHighways = allowHighways;
     }
 
     public Vehicle getVehicle() {
@@ -217,5 +243,4 @@ public Visit getPreviousVisit();
     public String toString() {
         return id;
     }
-
 }
