@@ -89,14 +89,15 @@ this.visits = visits;
          visits.stream().map(Visit::getLocation)).toList();
 
  // Initialize driving times with ORS matrices, fallback to Haversine if ORS is not reachable.
- String baseUrl = System.getProperty("app.ors.base-url",
-         System.getenv().getOrDefault("APP_ORS_BASE_URL", "http://ors-app:8082"));
- String profile = System.getProperty("app.ors.profile",
-         System.getenv().getOrDefault("APP_ORS_PROFILE", "driving-car"));
+String baseUrl = System.getProperty("app.ors.base-url",
+        System.getenv().getOrDefault("APP_ORS_BASE_URL", "http://ors-app:8082"));
+String profile = System.getProperty("app.ors.profile",
+        System.getenv().getOrDefault("APP_ORS_PROFILE", "driving-car"));
 
 try {
-    new org.acme.vehiclerouting.domain.geo.OrsDrivingTimeCalculator(baseUrl, profile)
-            .initDrivingTimeMaps(locations);
+    HighwayUsageRegistry.clear();
+    new OrsDrivingTimeCalculator(baseUrl, profile)
+            .initDrivingTimeMapsForPlan(vehicles, visits);
 } catch (Exception ex) {
     org.acme.vehiclerouting.domain.geo.HaversineDrivingTimeCalculator
             .getInstance().initDrivingTimeMaps(locations);

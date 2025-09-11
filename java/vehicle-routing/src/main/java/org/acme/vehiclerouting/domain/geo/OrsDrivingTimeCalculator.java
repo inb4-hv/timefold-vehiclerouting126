@@ -1,152 +1,182 @@
 package org.acme.vehiclerouting.domain.geo;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.acme.vehiclerouting.domain.Location;
+import org.acme.vehiclerouting.domain.Vehicle;
+import org.acme.vehiclerouting.domain.Visit;
+
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.time.Duration;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-
-import org.acme.vehiclerouting.domain.Location;
-
+/**
+ * Builds the driving-time map by calling /ors/v2/directions (pairwise).
+ * Highway usage per leg follows your rule:
+ *   - visit -> X : use source visit.allowHighways
+ *   - depot -> visit : use destination visit.allowHighways
+ *   - visit -> depot : use source visit.allowHighways
+ */
 public final class OrsDrivingTimeCalculator {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final HttpClient CLIENT = HttpClient.newBuilder()
-            .connectTimeout(java.time.Duration.ofSeconds(5))
+    private static final HttpClient CLIENT = HttpClient
+            .newBuilder()
+            .connectTimeout(Duration.ofSeconds(5))
             .build();
 
     private final String baseUrl;
     private final String profile;
+
+    // Simple cache so repeated imports don’t hammer ORS.
+    // Key format: "<fromLat,fromLon>-><toLat,toLon>|avoid=<true|false>"
+    private static final Map<String, Long> DURATION_CACHE_SEC = new ConcurrentHashMap<>();
 
     public OrsDrivingTimeCalculator(String baseUrl, String profile) {
         this.baseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
         this.profile = profile;
     }
 
-    /** Build BOTH matrices and assign to each Location. */
-    public void initDrivingTimeMaps(Collection<Location> locations) {
-        if (locations.size() <= 1) {
-            locations.forEach(l -> {
-                l.setDrivingTimeSecondsHighway(Map.of(l, 0L));
-                l.setDrivingTimeSecondsNoMotorway(Map.of(l, 0L));
-            });
-            return;
+    /**
+     * Initialize time maps using pairwise /directions calls and the allowHighways rule.
+     */
+    public void initDrivingTimeMapsForPlan(List<Vehicle> vehicles, List<Visit> visits) {
+        // Build location lists and helper maps
+        List<Location> allLocs = new ArrayList<>(vehicles.size() + visits.size());
+        Map<Location, Visit> locToVisit = new HashMap<>();
+        Set<Location> depotLocs = new HashSet<>();
+
+        for (Vehicle v : vehicles) {
+            Location dep = v.getHomeLocation();
+            allLocs.add(dep);
+            depotLocs.add(dep);
+        }
+        for (Visit vi : visits) {
+            Location lo = vi.getLocation();
+            allLocs.add(lo);
+            locToVisit.put(lo, vi);
         }
 
-        // ORS expects [lon, lat]
-        List<double[]> coords = new ArrayList<>(locations.size());
-        List<Location> indexToLoc = new ArrayList<>(locations.size());
-        for (Location l : locations) {
-            coords.add(new double[]{ l.getLongitude(), l.getLatitude() });
-            indexToLoc.add(l);
-        }
+        // Fill per-location driving maps
+        for (Location from : allLocs) {
+            Map<Location, Long> map = new HashMap<>(allLocs.size());
+            for (Location to : allLocs) {
+                long sec;
+                boolean usedHighway;
 
-        MatrixResult hi = fetchMatrix(coords, false);
-        MatrixResult no = fetchMatrix(coords, true);
-
-        for (int i = 0; i < indexToLoc.size(); i++) {
-            Location from = indexToLoc.get(i);
-            Map<Location, Long> mapHi = new HashMap<>();
-            Map<Location, Long> mapNo = new HashMap<>();
-
-            for (int j = 0; j < indexToLoc.size(); j++) {
-                Location to = indexToLoc.get(j);
-                long hiSec, noSec;
-
-                if (i == j) {
-                    hiSec = 0L;
-                    noSec = 0L;
+                if (from == to) {
+                    sec = 0L;
+                    usedHighway = false;
                 } else {
-                    Double tHi = hi.duration(i, j);
-                    Double dHi = hi.distance(i, j);
-                    Double tNo = no.duration(i, j);
-                    Double dNo = no.distance(i, j);
-
-                    // Cap at 85 km/h and fall back across matrices if one missing.
-                    hiSec = (tHi != null) ? adjustedWith85Cap(tHi, dHi)
-                                          : (tNo != null ? adjustedWith85Cap(tNo, dNo) : 36000L);
-                    noSec = (tNo != null) ? adjustedWith85Cap(tNo, dNo)
-                                          : (tHi != null ? adjustedWith85Cap(tHi, dHi) : 36000L);
+                    boolean avoidHighways = computeAvoidHighways(from, to, locToVisit, depotLocs);
+                    usedHighway = !avoidHighways;
+                    sec = fetchDurationSec(from, to, avoidHighways);
                 }
-                mapHi.put(to, hiSec);
-                mapNo.put(to, noSec);
+
+                map.put(to, sec);
+                HighwayUsageRegistry.mark(from, to, usedHighway);
             }
-            from.setDrivingTimeSecondsHighway(mapHi);
-            from.setDrivingTimeSecondsNoMotorway(mapNo);
+            from.setDrivingTimeSeconds(map);
         }
     }
 
-    private static long adjustedWith85Cap(double orsSeconds, Double distanceMetersOrNull) {
-        if (distanceMetersOrNull == null) return Math.round(orsSeconds);
-        double minSecondsAt85 = distanceMetersOrNull / (85.0 * 1000.0 / 3600.0);
-        return Math.round(Math.max(orsSeconds, minSecondsAt85));
+    /**
+     * Rule:
+     *  - If FROM is a visit: use FROM.allowHighways
+     *  - else (FROM is depot) and TO is a visit: use TO.allowHighways
+     *  - else default to no-highways
+     */
+    private static boolean computeAvoidHighways(Location from,
+                                                Location to,
+                                                Map<Location, Visit> locToVisit,
+                                                Set<Location> depotLocs) {
+        Visit fromVisit = locToVisit.get(from);
+        if (fromVisit != null) {
+            return !fromVisit.isAllowHighways();
+        }
+        Visit toVisit = locToVisit.get(to);
+        if (toVisit != null) {
+            return !toVisit.isAllowHighways();
+        }
+        // depot -> depot (irrelevant in practice); avoid highways by default
+        return true;
     }
 
-    private MatrixResult fetchMatrix(List<double[]> coords, boolean avoidMotorways) {
+    private long fetchDurationSec(Location from, Location to, boolean avoidHighways) {
+        String key = key(from, to, avoidHighways);
+        Long cached = DURATION_CACHE_SEC.get(key);
+        if (cached != null) return cached;
+
         try {
-            String url = baseUrl + "/ors/v2/matrix/" + profile;
-            Map<String,Object> body = new HashMap<>();
-            body.put("locations", coords);
-            body.put("metrics", List.of("duration", "distance"));
-            body.put("resolve_locations", false);
-            body.put("maximum_speed", 85);
-            if (avoidMotorways) {
-                body.put("avoid_features", List.of("highways"));
-            }
-
-            String json = MAPPER.writeValueAsString(body);
-            HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-                    .timeout(java.time.Duration.ofSeconds(20))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(json))
-                    .build();
-
-            HttpResponse<String> resp = CLIENT.send(req, HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
-                JsonNode root = MAPPER.readTree(resp.body());
-                return new MatrixResult(root.get("durations"), root.get("distances"));
-            } else {
-                return MatrixResult.empty();
-            }
+            long sec = callDirectionsSeconds(from, to, avoidHighways);
+            DURATION_CACHE_SEC.put(key, sec);
+            return sec;
         } catch (Exception e) {
-            return MatrixResult.empty();
+            // Fallback to Haversine time so we never produce the 10h sentinel.
+            long fallback = HaversineDrivingTimeCalculator.getInstance().calculateDrivingTime(from, to);
+            DURATION_CACHE_SEC.put(key, fallback);
+            return fallback;
         }
     }
 
-    private static final class MatrixResult {
-        private final JsonNode durations;
-        private final JsonNode distances;
+    private long callDirectionsSeconds(Location from, Location to, boolean avoidHighways) throws Exception {
+        String url = baseUrl + "/ors/v2/directions/" + profile + "?format=geojson";
 
-        private MatrixResult(JsonNode durations, JsonNode distances) {
-            this.durations = durations;
-            this.distances = distances;
+        ObjectNode root = MAPPER.createObjectNode();
+        ArrayNode coords = root.putArray("coordinates");
+        ArrayNode p1 = coords.addArray();
+        p1.add(from.getLongitude());
+        p1.add(from.getLatitude());
+        ArrayNode p2 = coords.addArray();
+        p2.add(to.getLongitude());
+        p2.add(to.getLatitude());
+
+        root.put("preference", "fastest");
+        root.put("maximum_speed", 85);
+        root.put("instructions", false);
+
+        ObjectNode options = root.putObject("options");
+        if (avoidHighways) {
+            ArrayNode avoid = options.putArray("avoid_features");
+            avoid.add("highways");
         }
 
-        static MatrixResult empty() {
-            return new MatrixResult(null, null);
+        String json = MAPPER.writeValueAsString(root);
+
+        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+                .timeout(Duration.ofSeconds(20))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(json))
+                .build();
+
+        HttpResponse<String> resp = CLIENT.send(req, HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
+            throw new IllegalStateException("ORS directions HTTP " + resp.statusCode());
         }
 
-        Double duration(int i, int j) {
-            if (durations == null || durations.isNull()) return null;
-            JsonNode row = durations.get(i);
-            if (row == null || row.isNull()) return null;
-            JsonNode v = row.get(j);
-            return (v == null || v.isNull()) ? null : v.asDouble();
+        JsonNode r = MAPPER.readTree(resp.body());
+        JsonNode features = r.get("features");
+        if (features == null || !features.isArray() || features.size() == 0) {
+            throw new IllegalStateException("ORS directions response missing features.");
         }
+        JsonNode summary = features.get(0).path("properties").path("summary");
+        double durationSec = summary.path("duration").asDouble(Double.NaN);
+        if (Double.isNaN(durationSec)) {
+            throw new IllegalStateException("ORS directions response missing duration.");
+        }
+        // You could also read distance if needed:
+        // double distance = summary.path("distance").asDouble();
 
-        Double distance(int i, int j) {
-            if (distances == null || distances.isNull()) return null;
-            JsonNode row = distances.get(i);
-            if (row == null || row.isNull()) return null;
-            JsonNode v = row.get(j);
-            return (v == null || v.isNull()) ? null : v.asDouble();
-        }
+        return Math.round(durationSec);
+    }
+
+    private static String key(Location from, Location to, boolean avoid) {
+        return from.toString() + "->" + to.toString() + "|avoid=" + avoid;
     }
 }
