@@ -264,8 +264,6 @@ private static Long parseDurationSeconds(JsonNode root) {
     }
     return null;
 }
-Why this fixes your symptoms
-
 
 
 }
