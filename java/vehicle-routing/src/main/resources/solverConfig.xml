@@ -19,9 +19,6 @@
     
   <localSearch>
     <localSearchType>LATE_ACCEPTANCE</localSearchType>
-    <forager>
-      <acceptedCountLimit>1</acceptedCountLimit>
-    </forager>
   </localSearch>
 
 </solver>
