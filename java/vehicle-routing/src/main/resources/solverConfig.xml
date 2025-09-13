@@ -11,26 +11,21 @@
     <constraintProviderClass>org.acme.vehiclerouting.solver.VehicleRoutingConstraintProvider</constraintProviderClass>
   </scoreDirectorFactory>
 
-  <!-- termination must come before phases; ISO 8601 durations -->
   <termination>
     <spentLimit>PT90S</spentLimit>
     <unimprovedSpentLimit>PT25S</unimprovedSpentLimit>
   </termination>
 
-  <!-- list variable -> keep default CH (no type) -->
   <constructionHeuristic/>
 
-  <!-- Phase 1: diversify with Late Acceptance -->
+  <!-- Phase 1 diversify: Late Acceptance -->
   <localSearch>
-    <!-- order: moveSelector, acceptor, forager is safest for the XSD -->
-    <moveSelector>
-      <unionMoveSelector>
-        <listChangeMoveSelector/>       <!-- relocate -->
-        <listSwapMoveSelector/>         <!-- 1 1 swap -->
-        <subListChangeMoveSelector/>    <!-- segment insert -->
-        <subListSwapMoveSelector/>      <!-- cross exchange -->
-      </unionMoveSelector>
-    </moveSelector>
+    <unionMoveSelector>
+      <listChangeMoveSelector/>
+      <listSwapMoveSelector/>
+      <subListChangeMoveSelector/>
+      <subListSwapMoveSelector/>
+    </unionMoveSelector>
     <acceptor>
       <lateAcceptanceSize>600</lateAcceptanceSize>
     </acceptor>
@@ -39,18 +34,15 @@
     </forager>
   </localSearch>
 
-  <!-- Phase 2: intensify with Tabu -->
+  <!-- Phase 2 intensify: Tabu -->
   <localSearch>
-    <moveSelector>
-      <unionMoveSelector>
-        <listChangeMoveSelector/>
-        <listSwapMoveSelector/>
-        <subListChangeMoveSelector/>
-        <subListSwapMoveSelector/>
-      </unionMoveSelector>
-    </moveSelector>
+    <unionMoveSelector>
+      <listChangeMoveSelector/>
+      <listSwapMoveSelector/>
+      <subListChangeMoveSelector/>
+      <subListSwapMoveSelector/>
+    </unionMoveSelector>
     <acceptor>
-      <!-- start with small integers; tune upward if you see cycling -->
       <entityTabuSize>7</entityTabuSize>
       <moveTabuSize>5</moveTabuSize>
     </acceptor>
