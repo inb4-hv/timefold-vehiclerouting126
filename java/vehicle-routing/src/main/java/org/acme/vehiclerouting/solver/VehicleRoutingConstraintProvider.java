@@ -45,15 +45,16 @@ public class VehicleRoutingConstraintProvider implements ConstraintProvider {
                 .penalize(HardSoftLongScore.ofHard(1_000_000))
                 .asConstraint(FIXED_VEHICLE);
     }
+    // ** THIS IS THE FINAL, CORRECTED CONSTRAINT **
     protected Constraint respectChronoOrder(ConstraintFactory factory) {
-        return factory.forEach(Visit.class)
-                .join(Visit.class,
-                        Joiners.equal(Visit::getVehicle),
-                        // Join a visit with all visits that come after it in the list
-                        Joiners.lessThan(v -> v.getVehicle().getVisits().indexOf(v)),
-                        Joiners.greaterThan(v -> v.getVehicle().getVisits().indexOf(v)))
-                // Penalize if the first visit's start time is after the second visit's start time
-                .filter((visitA, visitB) -> visitA.getMinStartTime().isAfter(visitB.getMinStartTime()))
+        return factory.forEachUniquePair(Visit.class,
+                Joiners.equal(Visit::getVehicle))
+                .filter((visitA, visitB) -> {
+                    List<Visit> visits = visitA.getVehicle().getVisits();
+                    // Check if visits appear out of order relative to their minStartTime
+                    return visitA.getMinStartTime().isAfter(visitB.getMinStartTime())
+                            && visits.indexOf(visitA) < visits.indexOf(visitB);
+                })
                 .penalize(HardSoftLongScore.ofHard(1_000_000))
                 .asConstraint("respectChronoOrder");
     }
