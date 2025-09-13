@@ -27,6 +27,7 @@ public class VehicleRoutingConstraintProvider implements ConstraintProvider {
     @Override
     public Constraint[] defineConstraints(ConstraintFactory factory) {
         return new Constraint[] {
+                respectChronoOrder(factory),                      // HARD
                 fixedVehicle(factory),                            // HARD
                 serviceFinishedAfterMaxEndTime(factory),         // HARD
                 startDelay(factory),                             // SOFT
@@ -43,6 +44,15 @@ public class VehicleRoutingConstraintProvider implements ConstraintProvider {
                 // Use a very large penalty to make this constraint effectively unbreakable
                 .penalize(HardSoftLongScore.ofHard(1_000_000))
                 .asConstraint(FIXED_VEHICLE);
+    }
+
+    protected Constraint respectChronoOrder(ConstraintFactory factory) {
+        return factory.forEachUniquePair(Visit.class,
+                Joiners.equal(Visit::getVehicle))
+                // Penalize if a visit with a later start time appears before a visit with an earlier one.
+                .filter((visitA, visitB) -> visitA.getMinStartTime().isAfter(visitB.getMinStartTime()))
+                .penalize(HardSoftLongScore.ofHard(1_000_000))
+                .asConstraint("respectChronoOrder");
     }
 
     protected Constraint serviceFinishedAfterMaxEndTime(ConstraintFactory factory) {
