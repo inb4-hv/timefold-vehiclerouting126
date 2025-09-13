@@ -12,7 +12,7 @@
   </scoreDirectorFactory>
 
   <termination>
-    <spentLimit>PT45S</spentLimit>
+    <spentLimit>PT345S</spentLimit>
   </termination>
 
   <constructionHeuristic/>
