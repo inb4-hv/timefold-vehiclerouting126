@@ -12,25 +12,18 @@
   </scoreDirectorFactory>
 
   <termination>
-    <spentLimit>45s</spentLimit>
+    <spentLimit>PT45S</spentLimit>
   </termination>
 
   <constructionHeuristic/>
     
   <localSearch>
     <localSearchType>LATE_ACCEPTANCE</localSearchType>
-     <!-- ...or be explicit with the acceptor, which I recommend -->
     <acceptor>
-        <!-- tune the window size to taste -->
-        <lateAcceptanceSize>200</lateAcceptanceSize>
-        <!-- make sure no tabu interferes if you just want pure LA -->
-        <entityTabuSize>0</entityTabuSize>
-        <moveTabuSize>0</moveTabuSize>
+      <lateAcceptanceSize>200</lateAcceptanceSize>
     </acceptor>
-
-    <!-- optional: keep forager simple for LA -->
     <forager>
-        <acceptedCountLimit>1</acceptedCountLimit>
+      <acceptedCountLimit>1</acceptedCountLimit>
     </forager>
   </localSearch>
 
