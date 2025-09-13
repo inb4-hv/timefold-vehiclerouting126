@@ -40,7 +40,8 @@ public class VehicleRoutingConstraintProvider implements ConstraintProvider {
         return factory.forEach(Visit.class)
                 .filter(v -> v.getFixedVehicle() != null && v.getVehicle() != null
                         && !v.getFixedVehicle().equals(v.getVehicle().getId()))
-                .penalize(HardSoftLongScore.ONE_HARD)
+                // Use a very large penalty to make this constraint effectively unbreakable
+                .penalize(HardSoftLongScore.ofHard(1_000_000))
                 .asConstraint(FIXED_VEHICLE);
     }
 
