@@ -11,45 +11,61 @@
     <constraintProviderClass>org.acme.vehiclerouting.solver.VehicleRoutingConstraintProvider</constraintProviderClass>
   </scoreDirectorFactory>
 
-  <!-- global termination for the whole solve -->
+  <!-- overall time cap -->
   <termination>
-    <spentLimit>PT90S</spentLimit>
+    <spentLimit>PT120S</spentLimit>
   </termination>
 
   <constructionHeuristic/>
 
-  <!-- Phase 1 diversify: Late Acceptance -->
+  <!-- Phase 1: diversify strongly with LA + broad neighborhoods -->
   <localSearch>
-    <!-- per-phase termination so phase 2 can start -->
     <termination>
-      <unimprovedSpentLimit>PT25S</unimprovedSpentLimit>
+      <unimprovedSpentLimit>PT20S</unimprovedSpentLimit>
     </termination>
 
     <unionMoveSelector>
-      <listChangeMoveSelector/>
-      <listSwapMoveSelector/>
-      <subListChangeMoveSelector/>
-      <subListSwapMoveSelector/>
+      <listChangeMoveSelector/>       <!-- relocate -->
+      <listSwapMoveSelector/>         <!-- swap two visits -->
+      <subListChangeMoveSelector/>    <!-- insert a segment -->
+      <subListSwapMoveSelector/>      <!-- cross exchange -->
     </unionMoveSelector>
 
     <acceptor>
-      <lateAcceptanceSize>600</lateAcceptanceSize>
+      <lateAcceptanceSize>1200</lateAcceptanceSize>
     </acceptor>
     <forager>
-      <acceptedCountLimit>1</acceptedCountLimit>
+      <!-- let it consider a few accepted moves before deciding -->
+      <acceptedCountLimit>4</acceptedCountLimit>
     </forager>
   </localSearch>
 
-  <!-- Phase 2 intensify: Tabu -->
+  <!-- Phase 2: big shake -->
   <localSearch>
-    <!-- optional per-phase termination; omit to run until global spentLimit expires -->
+    <termination>
+      <unimprovedSpentLimit>PT10S</unimprovedSpentLimit>
+    </termination>
+
+    <!-- ruin & recreate style (large jumps) -->
+    <listRuinRecreateMoveSelector/>
+    <!-- keep LA here too, smaller window -->
+    <acceptor>
+      <lateAcceptanceSize>300</lateAcceptanceSize>
+    </acceptor>
+    <forager>
+      <acceptedCountLimit>2</acceptedCountLimit>
+    </forager>
+  </localSearch>
+
+  <!-- Phase 3: intensify -->
+  <localSearch>
+    <!-- run until global cap unless you want another mini cap -->
     <unionMoveSelector>
       <listChangeMoveSelector/>
       <listSwapMoveSelector/>
       <subListChangeMoveSelector/>
       <subListSwapMoveSelector/>
     </unionMoveSelector>
-
     <acceptor>
       <entityTabuSize>7</entityTabuSize>
       <moveTabuSize>5</moveTabuSize>
