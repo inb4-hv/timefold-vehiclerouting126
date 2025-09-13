@@ -12,10 +12,9 @@
 
   <localSearch>
     <localSearchType>LATE_ACCEPTANCE</localSearchType>
+    <termination>
+        <spentLimit>45s</spentLimit>
+    </termination>
   </localSearch>
-
-  <termination>
-    <spentLimit>45s</spentLimit>
-  </termination>
 
 </solver>
