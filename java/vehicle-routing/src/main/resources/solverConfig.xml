@@ -10,11 +10,15 @@
     <constraintProviderClass>org.acme.vehiclerouting.solver.VehicleRoutingConstraintProvider</constraintProviderClass>
   </scoreDirectorFactory>
 
+  <constructionHeuristic>
+    <constructionHeuristicType>FIRST_FIT_DECREASING</constructionHeuristicType>
+  </constructionHeuristic>
   <localSearch>
     <localSearchType>LATE_ACCEPTANCE</localSearchType>
-    <termination>
-        <spentLimit>45s</spentLimit>
-    </termination>
   </localSearch>
+  
+  <termination>
+    <spentLimit>45s</spentLimit>
+  </termination>
 
 </solver>
