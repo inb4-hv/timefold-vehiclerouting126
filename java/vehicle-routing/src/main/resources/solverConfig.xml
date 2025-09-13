@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<solver xmlns="https://timefold.ai/xsd/solver" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-    xsi:schemaLocation="https://timefold.ai/xsd/solver https://timefold.ai/xsd/solver/solver.xsd">
+<solver xmlns="https://timefold.ai/xsd/solver"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="https://timefold.ai/xsd/solver https://timefold.ai/xsd/solver/solver.xsd">
 
   <solutionClass>org.acme.vehiclerouting.domain.VehicleRoutePlan</solutionClass>
   <entityClass>org.acme.vehiclerouting.domain.Vehicle</entityClass>
@@ -10,15 +11,18 @@
     <constraintProviderClass>org.acme.vehiclerouting.solver.VehicleRoutingConstraintProvider</constraintProviderClass>
   </scoreDirectorFactory>
 
+  <!-- termination must come before phases -->
+  <termination>
+    <!-- 45 seconds -->
+    <spentLimit>PT45S</spentLimit>
+  </termination>
+
   <constructionHeuristic>
     <constructionHeuristicType>FIRST_FIT_DECREASING</constructionHeuristicType>
   </constructionHeuristic>
+
   <localSearch>
     <localSearchType>LATE_ACCEPTANCE</localSearchType>
   </localSearch>
-  
-  <termination>
-    <spentLimit>45s</spentLimit>
-  </termination>
 
 </solver>
