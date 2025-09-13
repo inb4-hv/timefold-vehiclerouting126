@@ -6,13 +6,13 @@
   <entityClass>org.acme.vehiclerouting.domain.Vehicle</entityClass>
   <entityClass>org.acme.vehiclerouting.domain.Visit</entityClass>
 
-  <localSearch>
-    <localSearchType>LATE_ACCEPTANCE</localSearchType>
-  </localSearch>
-
   <scoreDirectorFactory>
     <constraintProviderClass>org.acme.vehiclerouting.solver.VehicleRoutingConstraintProvider</constraintProviderClass>
   </scoreDirectorFactory>
+
+  <localSearch>
+    <localSearchType>LATE_ACCEPTANCE</localSearchType>
+  </localSearch>
 
   <termination>
     <spentLimit>45s</spentLimit>
