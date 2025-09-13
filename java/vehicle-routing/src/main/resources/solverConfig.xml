@@ -14,7 +14,7 @@
   <!-- termination must come before phases -->
   <termination>
     <!-- 45 seconds -->
-    <spentLimit>PT45S</spentLimit>
+    <spentLimit>45s</spentLimit>
   </termination>
 
   <constructionHeuristic>
