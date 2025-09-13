@@ -8,7 +8,9 @@ import ai.timefold.solver.core.api.score.stream.Joiners;
 import org.acme.vehiclerouting.domain.Visit;
 import org.acme.vehiclerouting.domain.Vehicle;
 
+
 import java.time.Duration;
+import java.util.List;
 
 public class VehicleRoutingConstraintProvider implements ConstraintProvider {
 
