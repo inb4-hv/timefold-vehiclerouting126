@@ -11,19 +11,46 @@
     <constraintProviderClass>org.acme.vehiclerouting.solver.VehicleRoutingConstraintProvider</constraintProviderClass>
   </scoreDirectorFactory>
 
-  <termination>
-    <spentLimit>PT345S</spentLimit>
-  </termination>
+<termination>
+  <spentLimit>PT90S</spentLimit>
+  <unimprovedSpentLimit>PT25S</unimprovedSpentLimit>
+</termination>
 
-  <constructionHeuristic/>
-    
+<constructionHeuristic/>
+
+<!-- Phase 1 diversify -->
 <localSearch>
   <acceptor>
-    <lateAcceptanceSize>200</lateAcceptanceSize>
+    <lateAcceptanceSize>600</lateAcceptanceSize>
   </acceptor>
   <forager>
     <acceptedCountLimit>1</acceptedCountLimit>
   </forager>
+  <moveSelector>
+    <unionMoveSelector>
+      <listChangeMoveSelector/>       <!-- relocate -->
+      <listSwapMoveSelector/>         <!-- 1 1 swap -->
+      <subListChangeMoveSelector/>    <!-- segment insert -->
+      <subListSwapMoveSelector/>      <!-- cross exchange -->
+    </unionMoveSelector>
+  </moveSelector>
 </localSearch>
 
-</solver>
+<!-- Phase 2 intensify -->
+<localSearch>
+  <acceptor>
+    <entityTabuSize>max(3, ceil(customers/6))</entityTabuSize>
+    <moveTabuSize>max(3, ceil(customers/8))</moveTabuSize>
+  </acceptor>
+  <forager>
+    <acceptedCountLimit>1</acceptedCountLimit>
+  </forager>
+  <moveSelector>
+    <unionMoveSelector>
+      <listChangeMoveSelector/>
+      <listSwapMoveSelector/>
+      <subListChangeMoveSelector/>
+      <subListSwapMoveSelector/>
+    </unionMoveSelector>
+  </moveSelector>
+</localSearch>
