@@ -15,10 +15,8 @@
     <spentLimit>45s</spentLimit>
   </termination>
 
-  <constructionHeuristic>
-    <constructionHeuristicType>FIRST_FIT_DECREASING</constructionHeuristicType>
-  </constructionHeuristic>
-
+  <constructionHeuristic/>
+    
   <localSearch>
     <localSearchType>LATE_ACCEPTANCE</localSearchType>
   </localSearch>
