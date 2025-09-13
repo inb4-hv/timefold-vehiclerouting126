@@ -11,21 +11,27 @@
     <constraintProviderClass>org.acme.vehiclerouting.solver.VehicleRoutingConstraintProvider</constraintProviderClass>
   </scoreDirectorFactory>
 
+  <!-- global termination for the whole solve -->
   <termination>
     <spentLimit>PT90S</spentLimit>
-    <unimprovedSpentLimit>PT25S</unimprovedSpentLimit>
   </termination>
 
   <constructionHeuristic/>
 
   <!-- Phase 1 diversify: Late Acceptance -->
   <localSearch>
+    <!-- per-phase termination so phase 2 can start -->
+    <termination>
+      <unimprovedSpentLimit>PT25S</unimprovedSpentLimit>
+    </termination>
+
     <unionMoveSelector>
       <listChangeMoveSelector/>
       <listSwapMoveSelector/>
       <subListChangeMoveSelector/>
       <subListSwapMoveSelector/>
     </unionMoveSelector>
+
     <acceptor>
       <lateAcceptanceSize>600</lateAcceptanceSize>
     </acceptor>
@@ -36,12 +42,14 @@
 
   <!-- Phase 2 intensify: Tabu -->
   <localSearch>
+    <!-- optional per-phase termination; omit to run until global spentLimit expires -->
     <unionMoveSelector>
       <listChangeMoveSelector/>
       <listSwapMoveSelector/>
       <subListChangeMoveSelector/>
       <subListSwapMoveSelector/>
     </unionMoveSelector>
+
     <acceptor>
       <entityTabuSize>7</entityTabuSize>
       <moveTabuSize>5</moveTabuSize>
