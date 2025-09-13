@@ -47,19 +47,17 @@ public class VehicleRoutingConstraintProvider implements ConstraintProvider {
                 .penalize(HardSoftLongScore.ofHard(1_000_000))
                 .asConstraint(FIXED_VEHICLE);
     }
-    // ** THIS IS THE FINAL, CORRECTED CONSTRAINT **
-    protected Constraint respectChronoOrder(ConstraintFactory factory) {
-        return factory.forEachUniquePair(Visit.class,
-                Joiners.equal(Visit::getVehicle))
-                .filter((visitA, visitB) -> {
-                    List<Visit> visits = visitA.getVehicle().getVisits();
-                    // Check if visits appear out of order relative to their minStartTime
-                    return visitA.getMinStartTime().isAfter(visitB.getMinStartTime())
-                            && visits.indexOf(visitA) < visits.indexOf(visitB);
-                })
-                .penalize(HardSoftLongScore.ofHard(1_000_000))
-                .asConstraint("respectChronoOrder");
-    }
+// ** THIS IS THE FINAL, CORRECTED CONSTRAINT **
+protected Constraint respectChronoOrder(ConstraintFactory factory) {
+    return factory.forEach(Visit.class)
+            // Ensure the visit is not the first in the chain
+            .filter(visit -> visit.getPreviousVisit() != null)
+            // Penalize if this visit's start time is EARLIER than the one before it,
+            // which means they are out of order.
+            .filter(visit -> visit.getMinStartTime().isBefore(visit.getPreviousVisit().getMinStartTime()))
+            .penalize(HardSoftLongScore.ofHard(1_000_000))
+            .asConstraint("respectChronoOrder");
+}
 
     protected Constraint serviceFinishedAfterMaxEndTime(ConstraintFactory factory) {
         return factory.forEach(Visit.class)
