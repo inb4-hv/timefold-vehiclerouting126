@@ -1,78 +1,63 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<solver xmlns="https://timefold.ai/xsd/solver"
-        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:schemaLocation="https://timefold.ai/xsd/solver https://timefold.ai/xsd/solver/solver.xsd">
+<!-- global cap -->
+<termination>
+  <spentLimit>PT180S</spentLimit>
+</termination>
 
-  <solutionClass>org.acme.vehiclerouting.domain.VehicleRoutePlan</solutionClass>
-  <entityClass>org.acme.vehiclerouting.domain.Vehicle</entityClass>
-  <entityClass>org.acme.vehiclerouting.domain.Visit</entityClass>
+<constructionHeuristic/>
 
-  <scoreDirectorFactory>
-    <constraintProviderClass>org.acme.vehiclerouting.solver.VehicleRoutingConstraintProvider</constraintProviderClass>
-  </scoreDirectorFactory>
-
-  <!-- overall time cap -->
+<!-- Phase 1 explore a lot -->
+<localSearch>
+  <!-- let it wander longer before giving up -->
   <termination>
-    <spentLimit>PT120S</spentLimit>
+    <unimprovedSpentLimit>PT40S</unimprovedSpentLimit>
   </termination>
 
-  <constructionHeuristic/>
+  <unionMoveSelector>
+    <listChangeMoveSelector/>
+    <listSwapMoveSelector/>
+    <subListChangeMoveSelector/>
+    <subListSwapMoveSelector/>
+  </unionMoveSelector>
 
-  <!-- Phase 1: diversify strongly with LA + broad neighborhoods -->
-  <localSearch>
-    <termination>
-      <unimprovedSpentLimit>PT20S</unimprovedSpentLimit>
-    </termination>
+  <acceptor>
+    <!-- big window = braver exploration -->
+    <lateAcceptanceSize>1600</lateAcceptanceSize>
+  </acceptor>
+  <forager>
+    <!-- consider a few accepted moves before picking -->
+    <acceptedCountLimit>4</acceptedCountLimit>
+  </forager>
+</localSearch>
 
-    <unionMoveSelector>
-      <listChangeMoveSelector/>       <!-- relocate -->
-      <listSwapMoveSelector/>         <!-- swap two visits -->
-      <subListChangeMoveSelector/>    <!-- insert a segment -->
-      <subListSwapMoveSelector/>      <!-- cross exchange -->
-    </unionMoveSelector>
+<!-- Phase 2 big jump to escape structures -->
+<localSearch>
+  <termination>
+    <unimprovedSpentLimit>PT20S</unimprovedSpentLimit>
+  </termination>
 
-    <acceptor>
-      <lateAcceptanceSize>1200</lateAcceptanceSize>
-    </acceptor>
-    <forager>
-      <!-- let it consider a few accepted moves before deciding -->
-      <acceptedCountLimit>4</acceptedCountLimit>
-    </forager>
-  </localSearch>
+  <listRuinRecreateMoveSelector/>
+  <acceptor>
+    <lateAcceptanceSize>400</lateAcceptanceSize>
+  </acceptor>
+  <forager>
+    <acceptedCountLimit>2</acceptedCountLimit>
+  </forager>
+</localSearch>
 
-  <!-- Phase 2: big shake -->
-  <localSearch>
-    <termination>
-      <unimprovedSpentLimit>PT10S</unimprovedSpentLimit>
-    </termination>
-
-    <!-- ruin & recreate style (large jumps) -->
-    <listRuinRecreateMoveSelector/>
-    <!-- keep LA here too, smaller window -->
-    <acceptor>
-      <lateAcceptanceSize>300</lateAcceptanceSize>
-    </acceptor>
-    <forager>
-      <acceptedCountLimit>2</acceptedCountLimit>
-    </forager>
-  </localSearch>
-
-  <!-- Phase 3: intensify -->
-  <localSearch>
-    <!-- run until global cap unless you want another mini cap -->
-    <unionMoveSelector>
-      <listChangeMoveSelector/>
-      <listSwapMoveSelector/>
-      <subListChangeMoveSelector/>
-      <subListSwapMoveSelector/>
-    </unionMoveSelector>
-    <acceptor>
-      <entityTabuSize>7</entityTabuSize>
-      <moveTabuSize>5</moveTabuSize>
-    </acceptor>
-    <forager>
-      <acceptedCountLimit>1</acceptedCountLimit>
-    </forager>
-  </localSearch>
-
-</solver>
+<!-- Phase 3 tighten to polish -->
+<localSearch>
+  <!-- run until global cap -->
+  <unionMoveSelector>
+    <listChangeMoveSelector/>
+    <listSwapMoveSelector/>
+    <subListChangeMoveSelector/>
+    <subListSwapMoveSelector/>
+  </unionMoveSelector>
+  <acceptor>
+    <entityTabuSize>9</entityTabuSize>
+    <moveTabuSize>7</moveTabuSize>
+  </acceptor>
+  <forager>
+    <acceptedCountLimit>1</acceptedCountLimit>
+  </forager>
+</localSearch>
