@@ -17,8 +17,13 @@
 
   <constructionHeuristic/>
     
-  <localSearch>
-    <localSearchType>LATE_ACCEPTANCE</localSearchType>
-  </localSearch>
+<localSearch>
+  <acceptor>
+    <lateAcceptanceSize>200</lateAcceptanceSize>
+  </acceptor>
+  <forager>
+    <acceptedCountLimit>1</acceptedCountLimit>
+  </forager>
+</localSearch>
 
 </solver>
